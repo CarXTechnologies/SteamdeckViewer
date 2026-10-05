@@ -15,6 +15,19 @@ public sealed class MoonlightTests
 			args);
 	}
 
+	// Game Mode: абсолютную мышь gamescope не понимает (ValveSoftware/gamescope#2458), флаг задаётся явно, а не из настроек Moonlight
+	[Fact]
+	public void StreamArgumentsForGameMode()
+	{
+		IReadOnlyList<string> args = Moonlight.StreamArguments("10.23.3.120",
+			new StreamOptions(1920, 1080, 90, 40000, Fullscreen: true, PerformanceOverlay: false, AbsoluteMouse: false));
+
+		Assert.Equal(
+			["stream", "10.23.3.120", "Desktop", "--display-mode", "fullscreen", "--resolution", "1920x1080", "--fps", "90", "--bitrate", "40000",
+				"--no-absolute-mouse", "--no-quit-after"],
+			args);
+	}
+
 	[Fact]
 	public void PairArgumentsAndPin()
 	{
