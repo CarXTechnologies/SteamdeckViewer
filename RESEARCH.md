@@ -409,6 +409,7 @@ SteamdeckViewer/
   - Захват `portal` работает в любой установке, но только в сеансе пользователя (шина D-Bus сеанса), а не от root.
 - **Sunshine выбирает способ захвата один раз при старте.** Его можно задать в командной строке (`sunshine capture=portal`), это перекрывает `sunshine.conf`. Каталог настроек задаётся переменной `CONFIGURATION_DIRECTORY` (`$CONFIGURATION_DIRECTORY/sunshine`), она важнее `XDG_CONFIG_HOME`.
 - **root внутри flatpak — не настоящий root.** Даже с setuid-копией `bwrap` песочница работает в своём пространстве пользователей. Файлы чужих пользователей там доступны только по правам «для всех», поэтому закрытый `/home/deck` для неё недоступен.
+- **Абсолютная мышь в Game Mode не работает** (проверено на Deck, ошибка gamescope ValveSoftware/gamescope#2458, открыта). Sunshine 2026.x создаёт для режима Moonlight `--absolute-mouse` устройство с `ABS_X`/`ABS_Y` 0..65535. gamescope берёт `libinput_event_pointer_get_absolute_x()` без пересчёта в размер экрана, и курсор стоит в правом нижнем углу. Клавиатура и относительная мышь работают. Поэтому в Game Mode Moonlight запускается с `--no-absolute-mouse`, а на рабочем столе (KWin) — с `--absolute-mouse`. Флаг передаётся всегда, иначе Moonlight возьмёт режим из своих настроек.
 - **Ввод от имени пользователя.** Мыши, клавиатуре и геймпаду Sunshine нужны `/dev/uinput` и `/dev/uhid`. Правило udev из пакета (`share/sunshine/udev/rules.d/60-sunshine.rules`, `TAG+="uaccess"`) даёт к ним доступ активному пользователю.
 
 ### Решение
@@ -467,6 +468,7 @@ SteamdeckViewer/
 - Чёрный экран в Game Mode, Sunshine 2026.906+: https://github.com/LizardByte/Sunshine/issues/5839
 - Gamescope без portal-захвата, KMS обязателен: https://docs.bazzite.gg/Advanced/sunshine/
 - Повёрнутая картинка KMS-захвата на Deck и обход через X11: https://github.com/LizardByte/Sunshine/issues/2439
+- Абсолютная мышь Sunshine в gamescope застревает в углу: https://github.com/ValveSoftware/gamescope/issues/2458
 - Sunshine — захват `portal`/`kwin` для KDE Plasma и `kde-authorized`: https://github.com/LizardByte/Sunshine/blob/master/docs/troubleshooting.md
 - Sunshine — разбор поворота панели в KMS-захвате и захват KWin: https://github.com/LizardByte/Sunshine/blob/master/src/platform/linux/kmsgrab.cpp , https://github.com/LizardByte/Sunshine/blob/master/src/platform/linux/kwingrab.cpp
 - KWin 6.4 — аппаратный поворот только при прямом выводе: https://github.com/KDE/kwin/blob/Plasma/6.4/src/backends/drm/drm_pipeline.cpp
