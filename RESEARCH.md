@@ -373,6 +373,72 @@ SteamdeckViewer/
 
 ---
 
+## 11. Удалённый экран: исследование и решение (октябрь 2026)
+
+### Что выяснилось
+- **Захват Game Mode возможен только через KMS.** Gamescope не умеет XDG Portal и KWin screencast, поэтому Sunshine нужен `CAP_SYS_ADMIN`, то есть права root.
+- **Flatpak и AppImage Sunshine KMS-захват официально не поддерживают.**
+- **Нативный пакет через pacman не годится.** Корень SteamOS только для чтения, а такие пакеты стираются при обновлении ОС. Так ставится форк Polaris, и после обновлений его приходится переустанавливать.
+- **decky-sunshine решает это иначе:**
+  - flatpak Sunshine ставится в system-установку;
+  - запускается от root (бэкенд Decky работает как root);
+  - `FLATPAK_BWRAP` указывает на setuid-копию `/usr/bin/bwrap`, так песочница сохраняет `CAP_SYS_ADMIN`;
+  - конфиг лежит в `/root/.var/app/dev.lizardbyte.app.Sunshine/config/sunshine/`.
+
+  Схема проверена пользователями на Deck.
+- **Чёрный экран в Game Mode.** У Sunshine 2026.906+ на SteamOS 3.8 он бывает при части подключений (баг LizardByte/Sunshine#5839, не исправлен). KMS-захват берёт только первую плоскость. Обход: `GAMESCOPE_COMPOSITE_FORCE=1` через `xprop` на время стрима. Это немного нагружает GPU.
+- **API Sunshine** на порту 47990 (HTTPS с самоподписанным сертификатом, Basic auth):
+  - с версии 2026.9 сопряжение адресное: `GET /api/pin` отдаёт ожидающие запросы Moonlight (`id`, `name`, `address`), `POST /api/pin` `{"pairing_id","pin","name"}` подтверждает один из них и отвечает только после обмена ключами (до `ping_timeout`, по умолчанию 10 с), `DELETE /api/pin` `{"pairing_id"}` отменяет. Без `pairing_id` приходит 400. Moonlight шлёт постоянный `uniqueid`, поэтому неотвеченный запрос прошлой попытки блокирует новую (409), пока его не отменить или он не истечёт (5 мин);
+  - до 2026.9: `POST /api/pin` `{"pin","name"}`, а `GET /api/pin` нет (404);
+  - `GET /api/clients/list` — список сопряжённых клиентов.
+
+  Клиентам без заголовков Origin/Referer CSRF-токен не нужен. Логин и пароль задаются командой `sunshine --creds <user> <pass>`.
+- **Moonlight-qt CLI:**
+  - `pair <host> --pin <4 цифры>`;
+  - `stream <host> <app>` с `--display-mode windowed|fullscreen|borderless`, `--resolution WxH`, `--fps`, `--bitrate` (Кбит/с), `--absolute-mouse` (режим удалённого рабочего стола), `--performance-overlay`;
+  - также `list` и `quit`.
+- **mDNS на SteamOS.** Публикация avahi по умолчанию выключена, Deck сам о себе не объявляет. Поэтому автопоиск надёжнее делать перебором подсети на порт 32000.
+- **Рабочий стол через KMS получается повёрнутым** (проверено на Deck, см. также LizardByte/Sunshine#2439). Панель Deck физически вертикальная, 800×1280.
+  - В Game Mode gamescope поворачивает картинку аппаратно, свойством `rotation` плоскости DRM. Sunshine это свойство читает и разворачивает кадр.
+  - KWin 6.4 поворачивает аппаратно только полноэкранные окна. Рабочий стол он рисует уже повёрнутым в вертикальный буфер, и KMS-захват отдаёт его лёжа на боку.
+  - Переменной окружения, которая включила бы аппаратный поворот для всего рабочего стола, в KWin нет.
+- **Захват рабочего стола без поворота.** SteamOS 3.8 по умолчанию запускает рабочий стол на Wayland, поэтому захват `x11` не подходит: Xwayland не видит окна Wayland.
+  - Документация Sunshine для KDE Plasma советует захват `portal` (xdg-desktop-portal) или `kwin`.
+  - Постоянное разрешение без диалога на Deck даёт `flatpak permission-set kde-authorized remote-desktop dev.lizardbyte.app.Sunshine yes`.
+  - Захват `kwin` из flatpak упирается в права KWin (нужен файл .desktop с `X-KDE-Wayland-Interfaces`) и в ограниченный доступ flatpak к PipeWire.
+  - Захват `portal` работает в любой установке, но только в сеансе пользователя (шина D-Bus сеанса), а не от root.
+- **Sunshine выбирает способ захвата один раз при старте.** Его можно задать в командной строке (`sunshine capture=portal`), это перекрывает `sunshine.conf`. Каталог настроек задаётся переменной `CONFIGURATION_DIRECTORY` (`$CONFIGURATION_DIRECTORY/sunshine`), она важнее `XDG_CONFIG_HOME`.
+- **root внутри flatpak — не настоящий root.** Даже с setuid-копией `bwrap` песочница работает в своём пространстве пользователей. Файлы чужих пользователей там доступны только по правам «для всех», поэтому закрытый `/home/deck` для неё недоступен.
+- **Ввод от имени пользователя.** Мыши, клавиатуре и геймпаду Sunshine нужны `/dev/uinput` и `/dev/uhid`. Правило udev из пакета (`share/sunshine/udev/rules.d/60-sunshine.rules`, `TAG+="uaccess"`) даёт к ним доступ активному пользователю.
+
+### Решение
+Повторяем схему decky-sunshine, но без Decky. Одна установка с паролем sudo (пароль вводится в приложении и не сохраняется):
+1. `flatpak install --system flathub dev.lizardbyte.app.Sunshine`.
+2. Системная служба `sdv-sunshine.service`. Перед запуском (`ExecStartPre`) она каждый раз кладёт свежую setuid-копию `bwrap` в `/var/lib/steamdeckviewer`, затем запускает Sunshine от root с `FLATPAK_BWRAP` и `PULSE_SERVER` пользователя `deck`.
+3. Правило polkit: пользователь `deck` может запускать и останавливать только эту службу без пароля. Дальше «Запустить» и «Остановить» работают по SSH без sudo.
+4. Правило udev из пакета Sunshine (или запасное для `uinput` и `uhid`) и автозагрузка модуля `uhid`.
+5. `sunshine.conf` в `/root/.var/app/dev.lizardbyte.app.Sunshine/config/sunshine`: `encoder = vaapi`, `adapter_name = /dev/dri/renderD128`, `system_tray = disabled`, а `capture` не задаётся. Логин и пароль веб-интерфейса генерирует приложение.
+
+Службы две, и у каждой свой каталог настроек:
+- **Game Mode:** системная `sdv-sunshine.service` от root с `capture=kms` и каталогом в `/root`.
+- **Рабочий стол:** пользовательская `sdv-sunshine-desktop.service` от `deck` с `capture=portal` (`x11` в сеансе X11) и каталогом в `~/.var/app/dev.lizardbyte.app.Sunshine/config/sunshine`. Скрипт запуска создаёт её и выдаёт разрешение `kde-authorized`.
+
+Почему каталоги разные. Песочница flatpak работает в отдельном пространстве пользователей, и root в ней не может зайти в закрытый домашний каталог `deck`: `bwrap: Can't find source path …: Permission denied`, проверено на Deck. Чтобы у служб были одни ключи, `uniqueid`, логин и сопряжения и Moonlight видел один хост, каталоги синхронизирует `/var/lib/steamdeckviewer/sync-config.sh`. Он работает вне песочницы: как `ExecStartPre` (от `deck` к root) и `ExecStopPost` (от root к `deck`). Каталог копируется целиком, только если `sunshine_state.json` на исходной стороне новее. Одновременно работает одна служба, поэтому новее всегда каталог той, что работала последней. Установка сначала забирает свежие сопряжения от `deck`, затем принудительно копирует итоговые настройки ему.
+
+Скрипт запуска выбирает службу по тому, что на экране Deck (gamescope или Plasma), и останавливает другую: им нужны одни и те же порты.
+
+`/etc` и `/var` сохраняются при обновлениях SteamOS, так что установка их переживает. Кнопка «Удалить» убирает всё перечисленное.
+
+На ПК:
+- «Открыть экран» запускает службу под текущий режим, при необходимости проводит сопряжение и открывает Moonlight.
+- Пока Moonlight открыт (и ещё 30 с после его закрытия), приложение каждые 3 секунды проверяет режим Deck. Если новый режим держится две проверки подряд, оно запускает другую службу и открывает Moonlight заново.
+- Сопряжение: приложение отменяет зависшие запросы с адресов ПК, генерирует PIN и запускает `Moonlight.exe pair <ip> --pin`. Затем ждёт в `GET /api/pin` новый запрос с адреса ПК (или единственный новый) и отправляет для него тот же PIN. На старых версиях PIN уходит без `pairing_id`. Запросы идут через SSH (`curl` на самом Deck), поэтому не мешают ни VPN, ни сертификат.
+- Стрим: `Moonlight.exe stream <ip> Desktop` с разрешением Deck 1280×800.
+
+При включённом AmneziaVPN в исключения приложений нужно добавить и `Moonlight.exe`.
+
+---
+
 ## 10. Источники
 
 - Valve, Steamworks — загрузка игр на Steam Deck/Steam Machine (Devkit Client, сопряжение, Title Upload, CEF Console): https://partner.steamgames.com/doc/steamhardware/loadgames
@@ -394,3 +460,15 @@ SteamdeckViewer/
 - Steam Deck USB‑C как устройство (BIOS DRD, DeckMTP): https://tech.yahoo.com/computing/articles/steam-decks-usb-c-port-110023697.html
 - Remote Play с Deck как хостом — проблемы: https://www.gamingonlinux.com/2024/02/remote-play-broken-on-steam-deck-with-the-february-stable-update/
 - Включение SSH на Deck: https://pulsegeek.com/articles/enable-ssh-on-steam-deck-secure-remote-access
+- decky-sunshine — запуск Sunshine от root с setuid-копией bwrap, API, GAMESCOPE_COMPOSITE_FORCE: https://github.com/s0t7x/decky-sunshine/blob/main/py_modules/sunshine.py
+- Sunshine API (Basic auth, CSRF для не-браузерных клиентов, /api/pin, /api/clients/list): https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2api.html
+- Sunshine — настройки (capture, encoder, adapter_name): https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2configuration.html
+- Sunshine — KMS недоступен во flatpak/AppImage, `--creds`: https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2troubleshooting.html
+- Чёрный экран в Game Mode, Sunshine 2026.906+: https://github.com/LizardByte/Sunshine/issues/5839
+- Gamescope без portal-захвата, KMS обязателен: https://docs.bazzite.gg/Advanced/sunshine/
+- Повёрнутая картинка KMS-захвата на Deck и обход через X11: https://github.com/LizardByte/Sunshine/issues/2439
+- Sunshine — захват `portal`/`kwin` для KDE Plasma и `kde-authorized`: https://github.com/LizardByte/Sunshine/blob/master/docs/troubleshooting.md
+- Sunshine — разбор поворота панели в KMS-захвате и захват KWin: https://github.com/LizardByte/Sunshine/blob/master/src/platform/linux/kmsgrab.cpp , https://github.com/LizardByte/Sunshine/blob/master/src/platform/linux/kwingrab.cpp
+- KWin 6.4 — аппаратный поворот только при прямом выводе: https://github.com/KDE/kwin/blob/Plasma/6.4/src/backends/drm/drm_pipeline.cpp
+- Polaris на SteamOS (пакет pacman, avahi без публикации): https://github.com/papi-ux/polaris/blob/HEAD/docs/steamos.md
+- Moonlight-qt — параметры командной строки: https://github.com/moonlight-stream/moonlight-qt/blob/master/app/cli/commandlineparser.cpp
