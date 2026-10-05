@@ -570,6 +570,13 @@ internal sealed partial class MainWindow : Window
 		try
 		{
 			await Task.Run(() => work(deck, ct), CancellationToken.None);
+
+			// Иначе в строке состояния так и висело бы «…» уже завершённой операции
+			if (m_statusText.Text == busyText)
+			{
+				SetStatus("Готово");
+			}
+
 			return true;
 		}
 		catch (OperationCanceledException)
