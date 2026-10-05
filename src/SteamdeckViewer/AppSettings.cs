@@ -40,12 +40,15 @@ public sealed class AppSettings
 	public bool AutoRefreshStatus { get; set; } = true;
 	public string? LastDownloadFolder { get; set; }
 
+	// Через временный файл: оборванная запись не оставит полупустой settings.json
 	public void Save()
 	{
 		try
 		{
 			Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-			File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, JsonOptions));
+			string temp = SettingsPath + ".tmp";
+			File.WriteAllText(temp, JsonSerializer.Serialize(this, JsonOptions));
+			File.Move(temp, SettingsPath, overwrite: true);
 		}
 		catch
 		{
@@ -64,6 +67,16 @@ public sealed class AppSettings
 		}
 		catch
 		{
+			// Нечитаемый файл не затираем молча: откладываем копию, чтобы устройства и профили можно было вернуть
+			try
+			{
+				File.Copy(SettingsPath, SettingsPath + $".broken-{DateTime.Now:yyyyMMdd-HHmmss}", overwrite: true);
+			}
+			catch
+			{
+				// ignore
+			}
+
 			settings = new AppSettings();
 		}
 
