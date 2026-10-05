@@ -12,6 +12,9 @@ public sealed class DeckDevice
 	// SHA256-отпечаток ключа хоста с первого подключения: смена ключа — повод насторожиться
 	public string? HostKeyFingerprint { get; set; }
 
+	// Логин и пароль веб-интерфейса Sunshine, которые приложение задало при установке на этот Deck
+	public SunshineCredentials? Sunshine { get; set; }
+
 	public override string ToString()
 	{
 		return $"{Name} — {User}@{Host}";

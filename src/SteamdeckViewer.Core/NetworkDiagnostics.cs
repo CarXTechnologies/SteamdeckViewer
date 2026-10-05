@@ -76,6 +76,28 @@ public static class NetworkDiagnostics
 		return result;
 	}
 
+	// Все адреса ПК в том виде, в каком их записывает удалённая сторона (без %scope у IPv6)
+	public static IReadOnlySet<string> LocalAddresses()
+	{
+		var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+		{
+			if (nic.OperationalStatus != OperationalStatus.Up)
+			{
+				continue;
+			}
+
+			foreach (UnicastIPAddressInformation address in nic.GetIPProperties().UnicastAddresses)
+			{
+				string text = address.Address.ToString();
+				int scope = text.IndexOf('%');
+				result.Add(scope < 0 ? text : text[..scope]);
+			}
+		}
+
+		return result;
+	}
+
 	public static IReadOnlyList<string> ActiveVpnAdapters()
 	{
 		return NetworkInterface.GetAllNetworkInterfaces()
