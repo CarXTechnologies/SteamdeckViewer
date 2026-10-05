@@ -79,6 +79,10 @@ internal sealed partial class MainWindow
 		footer.Margin = new Thickness(0, 8, 0, 0);
 
 		var root = new DockPanel { Margin = new Thickness(0, 10, 0, 10) };
+		Control exchange = BuildExchangeGroup();
+		exchange.Margin = new Thickness(0, 0, 0, 10);
+		DockPanel.SetDock(exchange, Dock.Top);
+		root.Children.Add(exchange);
 		DockPanel.SetDock(header, Dock.Top);
 		root.Children.Add(header);
 		DockPanel.SetDock(columns, Dock.Top);
@@ -214,7 +218,7 @@ internal sealed partial class MainWindow
 		var progress = new Progress<SyncProgress>(ShowFilesProgress);
 		m_filesProgress.IsVisible = true;
 		bool ok = await RunOnDeckAsync($"Загрузка {files.Count} файлов в {target}…",
-			(deck, ct) => FolderSync.UploadAsync(deck, target, files, GuessMode, progress, ct));
+			(deck, ct) => FolderSync.UploadAsync(deck, target, files, FolderSync.GuessMode, progress, ct));
 		m_filesProgress.IsVisible = false;
 
 		if (ok)
@@ -222,15 +226,6 @@ internal sealed partial class MainWindow
 			m_filesProgressText.Text = $"Загружено файлов: {files.Count} ({DeckStatus.FormatBytes(files.Sum(f => f.Size))})";
 			await NavigateFilesAsync(target);
 		}
-	}
-
-	// Бит исполнения из Windows не приходит: ставим его скриптам и бинарникам Linux-сборок, остальным 644
-	private static UnixFileMode GuessMode(LocalFile file)
-	{
-		string extension = Path.GetExtension(file.RelativePath).ToLowerInvariant();
-		return extension is "" or ".sh" or ".x86_64" or ".appimage" or ".so" || extension.StartsWith(".so.", StringComparison.Ordinal)
-			? FolderSync.ExecutableMode
-			: FolderSync.RegularMode;
 	}
 
 	private void ShowFilesProgress(SyncProgress p)

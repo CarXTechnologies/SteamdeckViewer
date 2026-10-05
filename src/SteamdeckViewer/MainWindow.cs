@@ -512,15 +512,18 @@ internal sealed partial class MainWindow : Window
 		}
 
 		StopLogTail();
+		StopExchange();
 		m_relay.Stop();
 		m_deck.Dispose();
 		m_deck = null;
 		SetStatus("Отключено");
 		UpdateConnectionState();
+		ShowExchangeState();
 	}
 
 	private async Task OnConnectedAsync()
 	{
+		RestartExchange();
 		await RefreshStatusAsync();
 		await NavigateFilesAsync(m_currentRemotePath ?? "~");
 

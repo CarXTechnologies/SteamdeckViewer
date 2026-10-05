@@ -49,6 +49,10 @@ public sealed class AppSettings
 	public bool StreamPerformanceOverlay { get; set; }
 	public bool ForceGamescopeComposite { get; set; } = true;
 
+	// Папки обмена; пустой путь — «Steam Deck» на рабочем столе ПК
+	public bool ExchangeEnabled { get; set; } = true;
+	public string? ExchangeFolder { get; set; }
+
 	// Через временный файл: оборванная запись не оставит полупустой settings.json
 	public void Save()
 	{
