@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SteamdeckViewer.Core/SteamdeckViewer.Core.csproj" />
+    <Project Path="src/SteamdeckViewer/SteamdeckViewer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SteamdeckViewer.Tests/SteamdeckViewer.Tests.csproj" />
+  </Folder>
+</Solution>
