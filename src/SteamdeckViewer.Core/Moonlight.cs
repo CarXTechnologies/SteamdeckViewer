@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace SteamdeckViewer.Core;
 
-public sealed record StreamOptions(int Width, int Height, int Fps, int BitrateKbps, bool Fullscreen, bool PerformanceOverlay);
+public sealed record StreamOptions(int Width, int Height, int Fps, int BitrateKbps, bool Fullscreen, bool PerformanceOverlay, bool AbsoluteMouse = true);
 
 // Moonlight на ПК — клиент стрима Sunshine. Встраивать видео в окно приложения не нужно:
 // Moonlight уже умеет низкую задержку, HDR, геймпад и ввод, мы лишь запускаем его с нужными аргументами
@@ -37,7 +37,8 @@ public static class Moonlight
 		return ["pair", host, "--pin", pin];
 	}
 
-	// Абсолютная мышь — режим удалённого рабочего стола: курсор ПК совпадает с курсором на экране Deck
+	// Абсолютная мышь — режим удалённого рабочего стола: курсор ПК совпадает с курсором на экране Deck.
+	// Флаг передаётся всегда: без него Moonlight взял бы режим из своих сохранённых настроек
 	public static IReadOnlyList<string> StreamArguments(string host, StreamOptions options)
 	{
 		var args = new List<string>
@@ -47,7 +48,7 @@ public static class Moonlight
 			"--resolution", $"{options.Width}x{options.Height}",
 			"--fps", options.Fps.ToString(),
 			"--bitrate", options.BitrateKbps.ToString(),
-			"--absolute-mouse",
+			options.AbsoluteMouse ? "--absolute-mouse" : "--no-absolute-mouse",
 			"--no-quit-after"
 		};
 

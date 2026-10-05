@@ -80,6 +80,8 @@ internal sealed partial class MainWindow
 			open,
 			streamForm.Grid,
 			Ui.Hint("Мышь и клавиатура ПК управляют Deck напрямую, геймпад, подключённый к ПК, работает как геймпад Deck. " +
+			        "На рабочем столе курсор ПК совпадает с курсором Deck. В Game Mode мышь работает как в играх: щёлкните в окно стрима, " +
+			        "чтобы захватить её, Ctrl+Alt+Shift+Z — отпустить (абсолютную мышь gamescope пока не понимает). " +
 			        "Ctrl+Alt+Shift+X — окно или полный экран, Ctrl+Alt+Shift+Q — завершить стрим. При включённом VPN добавьте Moonlight.exe в исключения раздельного туннелирования.")));
 
 		var sunshineGroup = Ui.Group("Sunshine на Deck", Ui.Column(10,
@@ -125,11 +127,13 @@ internal sealed partial class MainWindow
 		ScheduleSave();
 	}
 
-	private StreamOptions CurrentStreamOptions()
+	// gamescope не пересчитывает координаты абсолютной мыши Sunshine (0..65535) в размер экрана, и курсор застревает
+	// в углу (ValveSoftware/gamescope#2458). Поэтому в Game Mode мышь относительная, как в играх
+	private StreamOptions CurrentStreamOptions(DeckScreenMode mode)
 	{
 		(int width, int height, _) = Resolutions[Math.Clamp(m_settings.StreamResolution, 0, Resolutions.Length - 1)];
 		return new StreamOptions(width, height, m_settings.StreamFps, m_settings.StreamBitrateMbps * 1000,
-			m_settings.StreamFullscreen, m_settings.StreamPerformanceOverlay);
+			m_settings.StreamFullscreen, m_settings.StreamPerformanceOverlay, AbsoluteMouse: mode == DeckScreenMode.Desktop);
 	}
 
 	// ---------------------------------------------------------------- состояние
@@ -306,6 +310,11 @@ internal sealed partial class MainWindow
 		return mode == DeckScreenMode.Desktop ? "рабочий стол" : "Game Mode";
 	}
 
+	private static string MouseHint(DeckScreenMode mode)
+	{
+		return mode == DeckScreenMode.Desktop ? string.Empty : " — щёлкните в окно стрима, чтобы захватить мышь, Ctrl+Alt+Shift+Z — отпустить";
+	}
+
 	private async Task StopSunshineAsync()
 	{
 		if (await RunOnDeckAsync("Остановка Sunshine…", SunshineHost.StopAsync))
@@ -473,7 +482,7 @@ internal sealed partial class MainWindow
 		try
 		{
 			StartStream(deck, mode);
-			SetStatus("Moonlight запущен: " + ModeName(mode));
+			SetStatus("Moonlight запущен: " + ModeName(mode) + MouseHint(mode));
 		}
 		catch (Exception e)
 		{
@@ -489,7 +498,7 @@ internal sealed partial class MainWindow
 
 		// Повторное «Открыть экран»: второе окно Moonlight всё равно выбило бы первое из стрима
 		CloseStream();
-		Process stream = Moonlight.Start(exe, Moonlight.StreamArguments(deck.Device.Host, CurrentStreamOptions()));
+		Process stream = Moonlight.Start(exe, Moonlight.StreamArguments(deck.Device.Host, CurrentStreamOptions(mode)));
 		m_stream = stream;
 		m_streamMode = mode;
 		m_modeChangedTicks = 0;
@@ -529,7 +538,7 @@ internal sealed partial class MainWindow
 			DeckScreenMode mode = await Task.Run(() => SunshineHost.StartAsync(deck, force, m_lifetime.Token));
 
 			StartStream(deck, mode);
-			SetStatus("Экран Deck переподключён: " + ModeName(mode));
+			SetStatus("Экран Deck переподключён: " + ModeName(mode) + MouseHint(mode));
 			ShowSunshineStatus(await Task.Run(() => SunshineHost.QueryAsync(deck, m_lifetime.Token)));
 		}
 		catch (OperationCanceledException)
