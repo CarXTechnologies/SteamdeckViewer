@@ -40,6 +40,15 @@ public sealed class AppSettings
 	public bool AutoRefreshStatus { get; set; } = true;
 	public string? LastDownloadFolder { get; set; }
 
+	// Удалённый экран
+	public string? MoonlightPath { get; set; }
+	public int StreamResolution { get; set; }
+	public int StreamFps { get; set; } = 60;
+	public int StreamBitrateMbps { get; set; } = 20;
+	public bool StreamFullscreen { get; set; }
+	public bool StreamPerformanceOverlay { get; set; }
+	public bool ForceGamescopeComposite { get; set; } = true;
+
 	// Через временный файл: оборванная запись не оставит полупустой settings.json
 	public void Save()
 	{

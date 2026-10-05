@@ -70,6 +70,7 @@ internal sealed partial class MainWindow : Window
 		// У Fluent заголовки вкладок 24 pt — для пяти вкладок слишком крупно
 		m_tabs.Resources["TabItemHeaderFontSize"] = 17.0;
 		m_tabs.Items.Add(new TabItem { Header = "Устройство", Content = BuildDeviceTab() });
+		m_tabs.Items.Add(new TabItem { Header = "Экран", Content = BuildScreenTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Файлы", Content = BuildFilesTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Билды", Content = BuildBuildsTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Отладка (Rider)", Content = BuildDebugTab() });
@@ -522,6 +523,19 @@ internal sealed partial class MainWindow : Window
 	{
 		await RefreshStatusAsync();
 		await NavigateFilesAsync(m_currentRemotePath ?? "~");
+
+		// Без диалогов: при подключении состояние Sunshine лишь показывается на вкладке «Экран»
+		try
+		{
+			if (m_deck is { } deck)
+			{
+				ShowSunshineStatus(await Task.Run(() => SunshineHost.QueryAsync(deck, m_lifetime.Token)));
+			}
+		}
+		catch
+		{
+			ShowSunshineStatus(null);
+		}
 	}
 
 	private void UpdateConnectionState()
