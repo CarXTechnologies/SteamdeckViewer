@@ -67,6 +67,15 @@ public static class FolderSync
 		return new SyncSummary(changed.Count, local.Count - changed.Count, deleted, bytes, stopwatch.Elapsed);
 	}
 
+	// Бит исполнения из Windows не приходит: ставим его скриптам и бинарникам Linux-сборок, остальным 644
+	public static UnixFileMode GuessMode(LocalFile file)
+	{
+		string extension = Path.GetExtension(file.RelativePath).ToLowerInvariant();
+		return extension is "" or ".sh" or ".x86_64" or ".appimage" or ".so" || extension.StartsWith(".so.", StringComparison.Ordinal)
+			? ExecutableMode
+			: RegularMode;
+	}
+
 	// Время изменения сравнивается с точностью до секунды: столько хранит tar
 	public static List<LocalFile> ListLocal(string localFolder, FileFilter? filter)
 	{
