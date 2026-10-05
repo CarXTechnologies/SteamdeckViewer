@@ -126,7 +126,7 @@ public sealed class DeckConnection : IDisposable
 			$"(grep -qxF {key} ~/.ssh/authorized_keys || printf '%s\\n' {key} >> ~/.ssh/authorized_keys) && " +
 			"chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys";
 
-		using SshCommand command = client.CreateCommand(script);
+		using SshCommand command = client.CreateCommand(Sh.UnixNewlines(script));
 		await command.ExecuteAsync(ct);
 		if (command.ExitStatus != 0)
 		{
@@ -139,7 +139,7 @@ public sealed class DeckConnection : IDisposable
 
 	public async Task<CommandResult> RunAsync(string command, CancellationToken ct = default)
 	{
-		using SshCommand cmd = m_ssh.CreateCommand(command);
+		using SshCommand cmd = m_ssh.CreateCommand(Sh.UnixNewlines(command));
 		await cmd.ExecuteAsync(ct);
 		return new CommandResult(cmd.ExitStatus ?? -1, cmd.Result, cmd.Error);
 	}
@@ -147,7 +147,7 @@ public sealed class DeckConnection : IDisposable
 	// Долгая команда (tail -F и т.п.): строки вывода отдаются по мере поступления, отмена посылает сигнал процессу
 	public async Task<int> StreamLinesAsync(string command, Action<string> onLine, CancellationToken ct)
 	{
-		using SshCommand cmd = m_ssh.CreateCommand(command);
+		using SshCommand cmd = m_ssh.CreateCommand(Sh.UnixNewlines(command));
 		Task execution = cmd.ExecuteAsync(ct);
 
 		Task reading = Task.Run(async () =>
@@ -175,7 +175,7 @@ public sealed class DeckConnection : IDisposable
 	// Команда с потоком в stdin (tar -x, xargs): writeInput пишет данные, по закрытию потока команда получает EOF
 	public async Task<CommandResult> RunWithInputAsync(string command, Func<Stream, CancellationToken, Task> writeInput, CancellationToken ct)
 	{
-		using SshCommand cmd = m_ssh.CreateCommand(command);
+		using SshCommand cmd = m_ssh.CreateCommand(Sh.UnixNewlines(command));
 		Task execution = cmd.ExecuteAsync(ct);
 
 		// Если команда упала раньше (нет места, нет прав), дописывать вход незачем — прерываем запись

@@ -8,6 +8,13 @@ public static class Sh
 		return "'" + value.Replace("'", "'\\''") + "'";
 	}
 
+	// Многострочные скрипты в исходниках с CRLF (git с core.autocrlf) несут \r в конце строк, а для bash «do\r» и «fi\r» —
+	// не ключевые слова. Всё, что уходит на Deck как команда, проходит через это
+	public static string UnixNewlines(string script)
+	{
+		return script.Replace("\r\n", "\n");
+	}
+
 	// "~/x y" -> "$HOME"/'x y': тильда внутри кавычек не раскрывается, поэтому домашнюю папку подставляем отдельно
 	public static string Path(string path)
 	{
