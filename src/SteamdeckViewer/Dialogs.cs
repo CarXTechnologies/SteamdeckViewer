@@ -14,7 +14,7 @@ internal static class Dialogs
 		return ShowMessageAsync(owner, message, "Ошибка", yesNo: false);
 	}
 
-	public static Task Info(Window owner, string message, string caption = "Steamdeck Viewer")
+	public static Task Info(Window owner, string message, string caption = "CarX Deck Tools")
 	{
 		return ShowMessageAsync(owner, message, caption, yesNo: false);
 	}

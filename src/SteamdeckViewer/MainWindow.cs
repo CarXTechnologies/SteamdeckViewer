@@ -31,7 +31,7 @@ internal sealed partial class MainWindow : Window
 
 	public MainWindow()
 	{
-		Title = "Steamdeck Viewer";
+		Title = "CarX Deck Tools";
 		Icon = LoadAppIcon();
 		MinWidth = 1100;
 		MinHeight = 700;

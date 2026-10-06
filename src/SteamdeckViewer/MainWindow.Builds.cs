@@ -395,7 +395,7 @@ internal sealed partial class MainWindow
 
 		if (shortcutProblem != null)
 		{
-			m_playerLog.Append("[SteamdeckViewer] ярлык Steam не создан: " + shortcutProblem);
+			m_playerLog.Append("[CarX Deck Tools] ярлык Steam не создан: " + shortcutProblem);
 			await Dialogs.Info(this, $"Билд залит, но ярлык «Devkit Game: {profile.GameId}» в Steam не создан:\n{shortcutProblem}\n\n" +
 			                         "Запустите Steam на Deck и повторите заливку (изменённых файлов не будет — уйдёт только регистрация) " +
 			                         "или выберите способ запуска «Напрямую».", "Заливка");
@@ -411,7 +411,7 @@ internal sealed partial class MainWindow
 			string text = $"Залито файлов: {summary.Uploaded} ({DeckStatus.FormatBytes(summary.Bytes)}), без изменений: {summary.Unchanged}, " +
 			              $"удалено: {summary.Deleted} · {summary.Elapsed:mm\\:ss} · {DeckStatus.FormatBytes((long)(summary.Bytes / seconds))}/с";
 			m_buildProgressText.Text = text;
-			m_playerLog.Append("[SteamdeckViewer] " + text);
+			m_playerLog.Append("[CarX Deck Tools] " + text);
 		}
 
 		if (ok)
@@ -495,7 +495,7 @@ internal sealed partial class MainWindow
 		UpdateDebugView();
 
 		string path = CurrentProfile.PlayerLogPath;
-		m_playerLog.Append($"[SteamdeckViewer] слежение за {path}");
+		m_playerLog.Append($"[CarX Deck Tools] слежение за {path}");
 
 		_ = Task.Run(async () =>
 		{
@@ -506,7 +506,7 @@ internal sealed partial class MainWindow
 			}
 			catch (Exception e)
 			{
-				m_playerLog.Append("[SteamdeckViewer] слежение остановлено: " + e.Message);
+				m_playerLog.Append("[CarX Deck Tools] слежение остановлено: " + e.Message);
 			}
 			finally
 			{

@@ -11,6 +11,14 @@
         <SelfContained>true</SelfContained>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
         <ApplicationIcon>steamdeckviewer_icon.ico</ApplicationIcon>
+        <!--Видимое имя программы; внутренние имена (пространства имён, папка настроек SteamdeckViewer, службы на Deck) прежние-->
+        <AssemblyName>CarXDeckTools</AssemblyName>
+        <RootNamespace>SteamdeckViewer</RootNamespace>
+        <Product>CarX Deck Tools</Product>
+        <AssemblyTitle>CarX Deck Tools</AssemblyTitle>
+        <Description>Управление Steam Deck с ПК: сборки, отладка Rider, экран, файлы</Description>
+        <Company>CarX Technologies</Company>
+        <Copyright>© CarX Technologies</Copyright>
     </PropertyGroup>
 
     <ItemGroup>
