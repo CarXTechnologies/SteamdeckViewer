@@ -32,6 +32,7 @@ internal sealed partial class MainWindow : Window
 	public MainWindow()
 	{
 		Title = "Steamdeck Viewer";
+		Icon = LoadAppIcon();
 		MinWidth = 1100;
 		MinHeight = 700;
 		Width = 1440;
@@ -64,6 +65,20 @@ internal sealed partial class MainWindow : Window
 	}
 
 	private DeckDevice? SelectedDevice => m_cbDevices.SelectedItem as DeckDevice;
+
+	// Та же иконка, что у exe, встроенная в сборку ресурсом; диалоги берут её у главного окна
+	private static WindowIcon? LoadAppIcon()
+	{
+		try
+		{
+			using Stream? stream = typeof(MainWindow).Assembly.GetManifestResourceStream("SteamdeckViewer.steamdeckviewer_icon.ico");
+			return stream != null ? new WindowIcon(stream) : null;
+		}
+		catch
+		{
+			return null;
+		}
+	}
 
 	private Control BuildLayout()
 	{

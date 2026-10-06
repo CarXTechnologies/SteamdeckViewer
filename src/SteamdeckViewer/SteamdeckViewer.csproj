@@ -10,10 +10,16 @@
         <PublishSingleFile>true</PublishSingleFile>
         <SelfContained>true</SelfContained>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <ApplicationIcon>steamdeckviewer_icon.ico</ApplicationIcon>
     </PropertyGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\SteamdeckViewer.Core\SteamdeckViewer.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!--Иконка окна; иконка exe — ApplicationIcon выше-->
+        <EmbeddedResource Include="steamdeckviewer_icon.ico" />
     </ItemGroup>
 
     <ItemGroup>
