@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace SteamdeckViewer.Core;
@@ -12,7 +14,7 @@ public sealed record SyncSummary(int Uploaded, int Unchanged, int Deleted, long 
 public sealed record LocalFile(string FullPath, string RelativePath, long Size, long MTime);
 
 // Заливка папок на Deck. Вместо тысяч мелких SFTP-операций файлы идут одним tar-потоком
-// в stdin `tar -x` на Deck, а при повторной заливке уходят только файлы с другим размером или временем изменения.
+// в stdin `tar -x` на Deck, а при повторной заливке уходят только файлы с другим размером или содержимым.
 // Байты не меняются: игра сверяет их с подписанным индексом player_layout.bundle
 public static class FolderSync
 {
@@ -35,14 +37,27 @@ public static class FolderSync
 		List<LocalFile> local = ListLocal(localFolder, filter);
 
 		var changed = new List<LocalFile>();
+		var touched = new List<LocalFile>();
 		foreach (LocalFile file in local)
 		{
 			if (!remote.TryGetValue(file.RelativePath, out (long Size, long MTime) existing) ||
-			    existing.Size != file.Size ||
-			    existing.MTime != file.MTime)
+			    existing.Size != file.Size)
 			{
 				changed.Add(file);
 			}
+			else if (existing.MTime != file.MTime)
+			{
+				touched.Add(file);
+			}
+		}
+
+		// Unity при пересборке переписывает все файлы, и у неизменных бандлов тоже меняется время.
+		// Такие файлы сверяются по SHA-256, а совпавшим на Deck ставится время с ПК, чтобы в следующий раз обойтись без хешей
+		if (touched.Count > 0)
+		{
+			HashSet<string> same = await FindSameContentAsync(deck, remoteFolder, touched, progress, ct);
+			await SetRemoteTimesAsync(deck, remoteFolder, touched.Where(f => same.Contains(f.RelativePath)).ToList(), ct);
+			changed.AddRange(touched.Where(f => !same.Contains(f.RelativePath)));
 		}
 
 		long bytes = changed.Sum(f => f.Size);
@@ -174,6 +189,35 @@ public static class FolderSync
 		return $"cd {Sh.Path(remoteFolder)} && xargs -0 -r rm -f -- && find . -mindepth 1 -type d -empty -delete";
 	}
 
+	// Четыре sha256sum параллельно; построчный вывод, чтобы строки разных процессов не перемешались
+	internal static string HashCommand(string remoteFolder, string listPath)
+	{
+		string list = Sh.Quote(listPath);
+		return $"cd {Sh.Path(remoteFolder)} && xargs -0 -r -P 4 -n 16 stdbuf -oL sha256sum -- < {list}; rm -f {list}";
+	}
+
+	// На входе пары «@время\0./путь\0»: xargs подставляет их в touch -d по две
+	internal static string TouchCommand(string remoteFolder)
+	{
+		return $"cd {Sh.Path(remoteFolder)} && xargs -0 -r -n 2 touch -c -m -d";
+	}
+
+	// Строка sha256sum: «хеш␠␠путь» или «хеш␠*путь». Имена с \ или переводом строки sha256sum экранирует —
+	// такие пропускаем, файл просто зальётся заново
+	internal static bool TryParseHashLine(string line, out string path, out string hash)
+	{
+		path = hash = string.Empty;
+		if (line.Length < 67 || line[64] != ' ' || (line[65] != ' ' && line[65] != '*') ||
+		    line.AsSpan(0, 64).ContainsAnyExcept("0123456789abcdef"))
+		{
+			return false;
+		}
+
+		hash = line[..64];
+		path = line[66..];
+		return true;
+	}
+
 	private static async Task<Dictionary<string, (long Size, long MTime)>> ListRemoteAsync(DeckConnection deck, string remoteFolder, CancellationToken ct)
 	{
 		CommandResult listing = await deck.RunAsync(ListCommand(remoteFolder), ct);
@@ -213,6 +257,103 @@ public static class FolderSync
 		{
 			throw new InvalidOperationException("Не удалось удалить лишние файлы на Deck: " + result.Combined.Trim());
 		}
+	}
+
+	// Хеши считаются одновременно на ПК и на Deck; прогресс — по стороне, которая отстаёт
+	private static async Task<HashSet<string>> FindSameContentAsync(DeckConnection deck, string remoteFolder, IReadOnlyList<LocalFile> files,
+		IProgress<SyncProgress>? progress, CancellationToken ct)
+	{
+		Dictionary<string, long> sizes = files.ToDictionary(f => f.RelativePath, f => f.Size, StringComparer.Ordinal);
+		long total = sizes.Values.Sum();
+		long localBytes = 0, remoteBytes = 0;
+		int localFiles = 0, remoteFiles = 0;
+		var throttle = Stopwatch.StartNew();
+
+		void Report()
+		{
+			lock (throttle)
+			{
+				if (throttle.ElapsedMilliseconds < 150)
+				{
+					return;
+				}
+
+				throttle.Restart();
+			}
+
+			progress?.Report(new SyncProgress("Сравнение содержимого",
+				Math.Min(Interlocked.Read(ref localBytes), Interlocked.Read(ref remoteBytes)), total,
+				Math.Min(Volatile.Read(ref localFiles), Volatile.Read(ref remoteFiles)), files.Count));
+		}
+
+		progress?.Report(new SyncProgress("Сравнение содержимого", 0, total, 0, files.Count));
+
+		var remoteHashes = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+		Task remote = HashRemoteAsync(deck, remoteFolder, files, (path, hash) =>
+		{
+			if (sizes.TryGetValue(path, out long size) && remoteHashes.TryAdd(path, hash))
+			{
+				Interlocked.Add(ref remoteBytes, size);
+				Interlocked.Increment(ref remoteFiles);
+				Report();
+			}
+		}, ct);
+
+		var localHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+		Task local = Task.Run(async () =>
+		{
+			foreach (LocalFile file in files)
+			{
+				await using var stream = new FileStream(file.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+					1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+				localHashes[file.RelativePath] = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct));
+				Interlocked.Add(ref localBytes, file.Size);
+				Interlocked.Increment(ref localFiles);
+				Report();
+			}
+		}, ct);
+
+		await Task.WhenAll(local, remote);
+		return files
+			.Where(f => remoteHashes.TryGetValue(f.RelativePath, out string? hash) && hash == localHashes[f.RelativePath])
+			.Select(f => f.RelativePath)
+			.ToHashSet(StringComparer.Ordinal);
+	}
+
+	// Файл, который на Deck не прочитался, просто не попадёт в ответ и зальётся заново
+	private static async Task HashRemoteAsync(DeckConnection deck, string remoteFolder, IReadOnlyList<LocalFile> files,
+		Action<string, string> onHash, CancellationToken ct)
+	{
+		// Список путей может не влезть в командную строку, поэтому сначала уходит во временный файл
+		string list = "/tmp/sdv-hash-" + Guid.NewGuid().ToString("N");
+		byte[] paths = Encoding.UTF8.GetBytes(string.Join('\0', files.Select(f => f.RelativePath)) + "\0");
+		CommandResult written = await deck.RunWithInputAsync("cat > " + Sh.Quote(list),
+			async (input, token) => await input.WriteAsync(paths, token), ct);
+		if (!written.Success)
+		{
+			throw new InvalidOperationException("Не удалось передать список файлов на Deck: " + written.Combined.Trim());
+		}
+
+		await deck.StreamLinesAsync(HashCommand(remoteFolder, list), line =>
+		{
+			if (TryParseHashLine(line, out string path, out string hash))
+			{
+				onHash(path, hash);
+			}
+		}, ct);
+		ct.ThrowIfCancellationRequested();
+	}
+
+	// Ошибка здесь не мешает заливке: в худшем случае в следующий раз файлы снова сверятся по хешу
+	private static async Task SetRemoteTimesAsync(DeckConnection deck, string remoteFolder, IReadOnlyList<LocalFile> files, CancellationToken ct)
+	{
+		if (files.Count == 0)
+		{
+			return;
+		}
+
+		byte[] pairs = Encoding.UTF8.GetBytes(string.Concat(files.Select(f => $"@{f.MTime}\0./{f.RelativePath}\0")));
+		await deck.RunWithInputAsync(TouchCommand(remoteFolder), async (input, token) => await input.WriteAsync(pairs, token), ct);
 	}
 
 	// TarWriter берёт длину записи из DataStream, поэтому обёртка обязана оставаться seekable

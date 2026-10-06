@@ -104,6 +104,55 @@ public sealed class FolderSyncLinuxTests
 		Assert.Equal("./b\n./b/d", result.Output.Trim());
 	}
 
+	// Пересобранный билд: размер тот же, время новое. Хеши с «Deck» совпадают с посчитанными на ПК,
+	// а после touch листинг совпадает и по времени — следующая заливка обойдётся без хешей
+	[WslFact]
+	public void HashAndTouchCommandsLetRebuiltFilesStay()
+	{
+		string home = Wsl.NewHome();
+		const string remote = "~/game";
+		var files = new Dictionary<string, string>
+		{
+			["a.bin"] = "one",
+			["sub dir/b 'q'.so"] = "two",
+			["-dash"] = "three",
+			["back\\slash"] = "four"
+		};
+		string list = home + "/list";
+		string setup =
+			$"mkdir -p {Sh.Path(remote)}/'sub dir' && cd {Sh.Path(remote)} && " +
+			string.Join(" && ", files.Select(f => $"printf '%s' {Sh.Quote(f.Value)} > ./{Sh.Quote(f.Key)}")) +
+			$" && printf '%s\\0' {string.Join(' ', files.Keys.Select(Sh.Quote))} missing > {Sh.Quote(list)}";
+
+		CommandResult hashed = Wsl.Run($"{setup}\n{FolderSync.HashCommand(remote, list)}\n[ -e {Sh.Quote(list)} ] && echo LEFT", home);
+
+		var parsed = new Dictionary<string, string>();
+		foreach (string line in hashed.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+		{
+			Assert.NotEqual("LEFT", line);
+			if (FolderSync.TryParseHashLine(line, out string path, out string hash))
+			{
+				parsed[path] = hash;
+			}
+		}
+
+		// Имя с обратной косой sha256sum экранирует: такой файл не сверяется и зальётся заново
+		Assert.Equal(["-dash", "a.bin", "sub dir/b 'q'.so"], parsed.Keys.Order(StringComparer.Ordinal));
+		foreach ((string path, string hash) in parsed)
+		{
+			Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(files[path]))), hash);
+		}
+
+		string touch = $"printf '@1700000000\\0./a.bin\\0@1700000100\\0./-dash\\0@1700000200\\0./nope\\0' | ( {FolderSync.TouchCommand(remote)} )";
+		CommandResult listing = Wsl.Run($"{touch}\n{FolderSync.ListCommand(remote)}", home);
+		Dictionary<string, (long Size, long MTime)> remoteFiles = FolderSync.ParseListing(listing.Output);
+
+		Assert.Equal(1700000000, remoteFiles["a.bin"].MTime);
+		Assert.Equal(1700000100, remoteFiles["-dash"].MTime);
+		Assert.False(remoteFiles.ContainsKey("nope"));
+		Assert.Equal(4, remoteFiles.Count);
+	}
+
 	// Заливка под systemd-inhibit: блокировка сна, если её разрешает polkit, иначе только простоя, иначе без блокировки.
 	// Данные из stdin доходят до команды в любом случае
 	[WslFact]

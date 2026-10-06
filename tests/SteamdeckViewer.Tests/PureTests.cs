@@ -130,4 +130,20 @@ public sealed class StatusParseTests
 		Assert.Equal((0L, 1700000001L), listing["sub dir/b"]);
 		Assert.Equal(2, listing.Count);
 	}
+
+	[Fact]
+	public void ParsesHashLines()
+	{
+		string hash = new string('a', 63) + "f";
+
+		Assert.True(FolderSync.TryParseHashLine(hash + "  sub dir/file.so", out string path, out string parsed));
+		Assert.Equal(("sub dir/file.so", hash), (path, parsed));
+		Assert.True(FolderSync.TryParseHashLine(hash + " *bin", out path, out _));
+		Assert.Equal("bin", path);
+
+		Assert.False(FolderSync.TryParseHashLine("\\" + hash + "  back\\\\slash", out _, out _));
+		Assert.False(FolderSync.TryParseHashLine(hash.ToUpperInvariant() + "  x", out _, out _));
+		Assert.False(FolderSync.TryParseHashLine(hash + "  ", out _, out _));
+		Assert.False(FolderSync.TryParseHashLine("sha256sum: missing: No such file or directory", out _, out _));
+	}
 }
