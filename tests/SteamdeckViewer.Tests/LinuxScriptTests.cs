@@ -103,6 +103,35 @@ public sealed class FolderSyncLinuxTests
 
 		Assert.Equal("./b\n./b/d", result.Output.Trim());
 	}
+
+	// Заливка под systemd-inhibit: блокировка сна, если её разрешает polkit, иначе только простоя, иначе без блокировки.
+	// Данные из stdin доходят до команды в любом случае
+	[WslFact]
+	public void KeepAwakePicksAllowedLockAndPassesStdin()
+	{
+		const string fakeInhibit = """
+			#!/bin/bash
+			echo "inhibit $*" >> "$HOME/calls"
+			[ -n "$DENY_ALL" ] && exit 1
+			[ "$1" = "--what=sleep:idle" ] && [ -z "$ALLOW_SLEEP" ] && exit 1
+			while [ $# -gt 0 ] && [ "$1" != "--mode=block" ] && [ "$1" != "true" ]; do shift; done
+			[ "$1" = "--mode=block" ] && shift
+			exec "$@"
+			""";
+
+		string run = Sh.KeepAwake("SteamdeckViewer: тест", "cat > out.txt");
+		string script =
+			$"mkdir -p ~/bin\ncat > ~/bin/systemd-inhibit <<'EOF'\n{fakeInhibit}\nEOF\nchmod +x ~/bin/systemd-inhibit\nexport PATH=\"$HOME/bin:$PATH\"\n" +
+			$"printf 'idle' | ( {run} ); echo \"A=$(cat out.txt) $(grep -c 'block cat' ~/calls) $(grep 'block cat' ~/calls | cut -d' ' -f2)\"; rm ~/calls\n" +
+			$"printf 'sleep' | ( export ALLOW_SLEEP=1; {run} ); echo \"B=$(cat out.txt) $(grep 'block cat' ~/calls | cut -d' ' -f2)\"; rm ~/calls\n" +
+			$"printf 'none' | ( export DENY_ALL=1; {run} ); echo \"C=$(cat out.txt) $(grep -c 'block cat' ~/calls)\"";
+
+		CommandResult result = Wsl.Run(script, Wsl.NewHome());
+
+		Assert.Contains("A=idle 1 --what=idle", result.Output);
+		Assert.Contains("B=sleep --what=sleep:idle", result.Output);
+		Assert.Contains("C=none 0", result.Output);
+	}
 }
 
 public sealed class DevkitGamesLinuxTests

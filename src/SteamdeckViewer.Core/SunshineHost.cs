@@ -415,15 +415,22 @@ public static class SunshineHost
 	{
 		return
 			"// SteamdeckViewer: пользователь Deck запускает и останавливает Sunshine без пароля\n" +
+			"// и по SSH не даёт Deck уснуть, пока идёт заливка (systemd-inhibit --what=sleep)\n" +
 			"polkit.addRule(function(action, subject) {\n" +
+			$"    if (subject.user != \"{SafeName(user)}\") {{\n" +
+			"        return polkit.Result.NOT_HANDLED;\n" +
+			"    }\n" +
 			"    if (action.id == \"org.freedesktop.systemd1.manage-units\" &&\n" +
-			$"        action.lookup(\"unit\") == \"{Unit}\" &&\n" +
-			$"        subject.user == \"{SafeName(user)}\") {{\n" +
+			$"        action.lookup(\"unit\") == \"{Unit}\") {{\n" +
 			"        var verb = action.lookup(\"verb\");\n" +
 			"        if (verb == \"start\" || verb == \"stop\" || verb == \"restart\") {\n" +
 			"            return polkit.Result.YES;\n" +
 			"        }\n" +
 			"    }\n" +
+			"    if (action.id == \"org.freedesktop.login1.inhibit-block-sleep\") {\n" +
+			"        return polkit.Result.YES;\n" +
+			"    }\n" +
+			"    return polkit.Result.NOT_HANDLED;\n" +
 			"});\n";
 	}
 

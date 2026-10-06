@@ -141,7 +141,8 @@ public sealed class SunshineParsingTests
 
 		string rule = SunshineHost.PolkitRule("deck");
 		Assert.Contains("action.lookup(\"unit\") == \"sdv-sunshine.service\"", rule);
-		Assert.Contains("subject.user == \"deck\"", rule);
+		Assert.Contains("subject.user != \"deck\"", rule);
+		Assert.Contains("action.id == \"org.freedesktop.login1.inhibit-block-sleep\"", rule);
 		Assert.Equal("weird-user", SunshineHost.SafeName("weird\"user"));
 	}
 
@@ -288,7 +289,7 @@ public sealed class SunshineLinuxTests
 
 		Assert.Contains("capture=kms", first[4]);
 		Assert.Contains("sync-config.sh to-user", first[4]);
-		Assert.Contains("subject.user == \"deck\"", first[4]);
+		Assert.Contains("subject.user != \"deck\"", first[4]);
 		Assert.Equal("RULE FROM FLATPAK\nuhid\n", first[5]);
 
 		// Повторная установка: сопряжение с рабочего стола у обеих служб, ключи не дублируются, без правила в пакете — запасное

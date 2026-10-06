@@ -159,7 +159,8 @@ public static class FolderSync
 	internal static string ExtractCommand(string remoteFolder)
 	{
 		string folder = Sh.Path(remoteFolder);
-		return $"mkdir -p {folder} && cd {folder} && tar -x -f - --no-same-owner --warning=no-timestamp";
+		return $"mkdir -p {folder} && cd {folder} && " +
+		       Sh.KeepAwake("заливка файлов", "tar -x -f - --no-same-owner --warning=no-timestamp");
 	}
 
 	internal static string ListCommand(string remoteFolder)
