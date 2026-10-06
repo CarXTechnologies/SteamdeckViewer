@@ -58,9 +58,17 @@ internal sealed partial class MainWindow
 
 	private void StopExchange()
 	{
-		m_exchangeLoop?.Cancel();
+		CancellationTokenSource? loop = m_exchangeLoop;
 		m_exchangeLoop = null;
 		m_exchange = null;
+		try
+		{
+			loop?.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+			// цикл уже завершился сам (оборвалась связь с Deck) и освободил источник отмены
+		}
 	}
 
 	// Цикл владеет своим CancellationTokenSource и освобождает его сам: StopExchange только отменяет

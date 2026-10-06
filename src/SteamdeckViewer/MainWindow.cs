@@ -625,8 +625,11 @@ internal sealed partial class MainWindow : Window
 				bool blocked = NetworkDiagnostics.IsBlockedByFirewall(e) ||
 				               await NetworkDiagnostics.IsBlockedAsync(deck.Device.Host, deck.Device.SshPort, CancellationToken.None);
 				Disconnect();
-				await Dialogs.Error(this, "Соединение с Deck потеряно: " + e.Message +
-				                          (blocked ? "\n\n" + NetworkDiagnostics.VpnAdvice(deck.Device.Host) : string.Empty));
+				await Dialogs.Error(this, "Соединение с Deck потеряно: " + e.Message + "\n\n" +
+				                          (blocked
+					                          ? NetworkDiagnostics.VpnAdvice(deck.Device.Host)
+					                          : "Возможно, Deck уснул. Разбудите его, подключитесь снова и повторите: " +
+					                            "заливка продолжится с того места, где оборвалась, — уйдут только недостающие и недописанные файлы."));
 			}
 			else
 			{
