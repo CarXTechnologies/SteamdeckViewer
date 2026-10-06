@@ -36,9 +36,19 @@ public sealed class BuildProfileTests
 	[Fact]
 	public void GameIdIsSafeForSteamUrl()
 	{
-		Assert.Equal("CarX-Street", new BuildProfile { Name = "CarX Street" }.GameId);
-		Assert.Equal("a-b-c_1.2", new BuildProfile { Name = "a/b&c_1.2" }.GameId);
+		Assert.Equal("CarX_Street", new BuildProfile { Name = "CarX Street" }.GameId);
+		Assert.Equal("a_b_c_1.2", new BuildProfile { Name = "a/b&c_1.2" }.GameId);
 		Assert.Equal("game", new BuildProfile { Name = "  " }.GameId);
+		Assert.Equal("_2fast", new BuildProfile { Name = "2fast" }.GameId);
+		Assert.Equal("x_", new BuildProfile { Name = "x" }.GameId);
+
+		// Шаблон id из devkit-клиента Valve: с дефисом Steam отвечает на create-shortcut «missing/invalid arguments»
+		foreach (string name in new[] { "CarX Street", "CarX-Street", "2fast", "x", "Игра", ".hidden", "a b-c.d" })
+		{
+			Assert.Matches("^[A-Za-z_][A-Za-z0-9_.]+$", new BuildProfile { Name = name }.GameId);
+		}
+
+		Assert.Equal("CarX-Street", new BuildProfile { Name = "CarX Street" }.LegacyGameId);
 	}
 
 	[Fact]

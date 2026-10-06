@@ -369,6 +369,7 @@ internal sealed partial class MainWindow
 				await DevkitGames.StopAsync(deck, profile, cts.Token);
 			}
 
+			await DevkitGames.MigrateLegacyFolderAsync(deck, profile, cts.Token);
 			summary = await FolderSync.SyncAsync(deck, profile.LocalFolder, profile.RemoteFolder,
 				new FileFilter(profile.Excludes), profile.DeleteExtraneous, progress, cts.Token);
 

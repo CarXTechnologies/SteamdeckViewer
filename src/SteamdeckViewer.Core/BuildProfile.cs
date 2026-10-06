@@ -42,9 +42,36 @@ public sealed class BuildProfile
 	public string SteamAppId { get; set; } = string.Empty;
 	public string PlayerLogPath { get; set; } = "~/.config/unity3d/CarX Technologies/CarX Street/Player.log";
 
-	// Идёт в URL команды Steam без экранирования (как у Valve), поэтому только безопасные символы
+	// Идёт в URL команды Steam без экранирования. Steam принимает только id по шаблону devkit-клиента Valve
+	// ^[A-Za-z_][A-Za-z0-9_.]+$, иначе create-shortcut отвечает «missing/invalid arguments»
 	[JsonIgnore]
 	public string GameId
+	{
+		get
+		{
+			var id = new StringBuilder();
+			foreach (char c in Name.Trim())
+			{
+				id.Append(char.IsAsciiLetterOrDigit(c) || c is '_' or '.' ? c : '_');
+			}
+
+			if (id.Length == 0)
+			{
+				return "game";
+			}
+
+			if (!char.IsAsciiLetter(id[0]) && id[0] != '_')
+			{
+				id.Insert(0, '_');
+			}
+
+			return id.Length < 2 ? id.Append('_').ToString() : id.ToString();
+		}
+	}
+
+	// id до 2026-10-06: с дефисами вместо пробелов. Залитую под ним папку переносим, а не заливаем заново
+	[JsonIgnore]
+	internal string LegacyGameId
 	{
 		get
 		{

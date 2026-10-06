@@ -167,7 +167,7 @@ public sealed class DevkitGamesLinuxTests
 		CommandResult result = Wsl.Run(script, home);
 
 		Assert.True(result.Output.Contains("registered|EXIT=0"), result.Combined);
-		Assert.Matches(@"devkit-1 steam://devkit-1/TOKEN123/create-shortcut\?response=%2Ftmp%2Fsdv-resp1-[0-9a-f]+%2Fresponse&gameid=CarX-Street", result.Output);
+		Assert.Matches(@"devkit-1 steam://devkit-1/TOKEN123/create-shortcut\?response=%2Ftmp%2Fsdv-resp1-[0-9a-f]+%2Fresponse&gameid=CarX_Street", result.Output);
 	}
 
 	[WslFact]
@@ -199,12 +199,32 @@ public sealed class DevkitGamesLinuxTests
 		Assert.DoesNotContain("CREATED", noPipe.Output);
 	}
 
+	// Билд, залитый под прежним id с дефисом, переименовывается, а не заливается заново; уже существующую папку не затирает
+	[WslFact]
+	public void MigratesBuildUploadedUnderLegacyId()
+	{
+		string migrate = DevkitGames.MigrateLegacyFolderScript(Profile);
+		string script =
+			"mkdir -p ~/devkit-game/CarX-Street && echo big > ~/devkit-game/CarX-Street/data\n" +
+			"touch ~/devkit-game/CarX-Street-argv.json ~/devkit-game/CarX-Street-settings.json\n" +
+			$"{migrate}; echo \"EXIT=$?\"; ls ~/devkit-game; cat ~/devkit-game/CarX_Street/data\n" +
+			"mkdir -p ~/devkit-game/CarX-Street && echo stale > ~/devkit-game/CarX-Street/data\n" +
+			$"{migrate}; echo ---; cat ~/devkit-game/CarX_Street/data";
+
+		CommandResult result = Wsl.Run(script, Wsl.NewHome());
+
+		string[] parts = result.Output.Split("---\n");
+		Assert.Contains("EXIT=0", parts[0]);
+		Assert.Equal("EXIT=0\nCarX_Street\nbig\n", parts[0]);
+		Assert.Equal("big\n", parts[1]);
+	}
+
 	[WslFact]
 	public void WritesDevkitLaunchFiles()
 	{
 		string home = Wsl.NewHome();
 		CommandResult result = Wsl.Run(DevkitGames.WriteLaunchFilesScript(Profile) +
-		                               "\necho; cat ~/devkit-game/CarX-Street-argv.json; echo; cat ~/devkit-game/CarX-Street-settings.json; echo; cat ~/devkit-game/CarX-Street-env.json", home);
+		                               "\necho; cat ~/devkit-game/CarX_Street-argv.json; echo; cat ~/devkit-game/CarX_Street-settings.json; echo; cat ~/devkit-game/CarX_Street-env.json", home);
 		Assert.True(result.Success, result.Combined);
 
 		string[] lines = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -222,10 +242,10 @@ public sealed class DevkitGamesLinuxTests
 	{
 		string home = Wsl.NewHome();
 		string script =
-			"mkdir -p ~/devkit-game/CarX-Street/sub\n" +
-			"cp /usr/bin/sleep ~/devkit-game/CarX-Street/CarX_Street.x86_64\n" +
-			"~/devkit-game/CarX-Street/CarX_Street.x86_64 300 & game=$!\n" +
-			"( cd ~/devkit-game/CarX-Street/sub && exec sleep 301 ) & helper=$!\n" +
+			"mkdir -p ~/devkit-game/CarX_Street/sub\n" +
+			"cp /usr/bin/sleep ~/devkit-game/CarX_Street/CarX_Street.x86_64\n" +
+			"~/devkit-game/CarX_Street/CarX_Street.x86_64 300 & game=$!\n" +
+			"( cd ~/devkit-game/CarX_Street/sub && exec sleep 301 ) & helper=$!\n" +
 			"sleep 302 & other=$!\n" +
 			"sleep 0.3\n" +
 			"n=$(" + DevkitGames.StopScript(Profile) + ")\n" +

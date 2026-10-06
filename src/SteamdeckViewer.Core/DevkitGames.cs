@@ -20,6 +20,32 @@ public static class DevkitGames
 		await SendSteamCommandAsync(deck, "create-shortcut", "gameid=" + profile.GameId, ct);
 	}
 
+	// Папка билда, залитая под прежним id (с дефисом), переименовывается под новый: 20+ ГБ не уходят повторно.
+	// Её файлы настроек запуска и ярлык со старым id убираются — Steam всё равно не принял бы такой id
+	public static async Task MigrateLegacyFolderAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
+	{
+		if (profile.LegacyGameId == profile.GameId)
+		{
+			return;
+		}
+
+		CommandResult result = await deck.RunAsync(MigrateLegacyFolderScript(profile), ct);
+		if (!result.Success)
+		{
+			throw new InvalidOperationException("Не удалось перенести ранее залитый билд: " + result.Combined.Trim());
+		}
+	}
+
+	internal static string MigrateLegacyFolderScript(BuildProfile profile)
+	{
+		string root = Sh.Path(GamesRoot);
+		string legacy = profile.LegacyGameId;
+		string id = profile.GameId;
+		return
+			$"if [ -d {root}/{Sh.Quote(legacy)} ] && [ ! -e {root}/{Sh.Quote(id)} ]; then mv {root}/{Sh.Quote(legacy)} {root}/{Sh.Quote(id)}; fi; " +
+			$"rm -f {root}/{Sh.Quote(legacy + "-argv.json")} {root}/{Sh.Quote(legacy + "-settings.json")} {root}/{Sh.Quote(legacy + "-env.json")}";
+	}
+
 	public static async Task WriteSteamAppIdAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(profile.SteamAppId))
