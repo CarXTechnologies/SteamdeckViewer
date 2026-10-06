@@ -8,7 +8,9 @@ namespace SteamdeckViewer.Core;
 
 public sealed record DiscoveredDeck(string Name, string Address, int HttpPort, string? Login);
 
-public sealed record DiscoveryResult(IReadOnlyList<DiscoveredDeck> Decks, bool BlockedByFirewall);
+// Unreachable — ответили по mDNS, но служба devkit по их адресу не отвечает (другая подсеть, изоляция клиентов Wi-Fi).
+// Пустой Address — адрес узнать не удалось: ответ пришёл через ретранслятор mDNS без A-записи
+public sealed record DiscoveryResult(IReadOnlyList<DiscoveredDeck> Decks, bool BlockedByFirewall, IReadOnlyList<DiscoveredDeck>? Unreachable = null);
 
 // Поиск устройств в режиме разработчика. Служба devkit анонсирует себя по mDNS как _steamos-devkit._tcp.
 // Запрос уходит с каждого физического адаптера отдельно (у ПК бывает и Ethernet, и Wi-Fi в разных подсетях),
@@ -26,14 +28,14 @@ public static class DeckDiscovery
 
 	public static async Task<DiscoveryResult> FindAsync(TimeSpan scanTime, CancellationToken ct)
 	{
-		var found = new ConcurrentDictionary<string, DiscoveredDeck>(StringComparer.OrdinalIgnoreCase);
+		var records = new MdnsRecords();
 		bool blocked = false;
 
 		await Task.WhenAll(NetworkDiagnostics.PhysicalNetworks().Select(async network =>
 		{
 			try
 			{
-				await QueryAsync(network.Address, scanTime, found, ct);
+				await QueryAsync(network.Address, scanTime, records, ct);
 			}
 			catch (Exception e) when (NetworkDiagnostics.IsBlockedByFirewall(e))
 			{
@@ -45,12 +47,46 @@ public static class DeckDiscovery
 			}
 		}));
 
-		if (found.IsEmpty && !blocked)
+		// Ответ mDNS ещё не значит, что по этому адресу Deck: в офисе между подсетями стоит ретранслятор, и без A-записи
+		// остаётся только его адрес. Берём лишь адреса, где отвечает служба devkit
+		var reachable = new ConcurrentBag<DiscoveredDeck>();
+		var unreachable = new ConcurrentBag<DiscoveredDeck>();
+		IReadOnlyList<(DiscoveredDeck Deck, bool Resolved)> candidates;
+		lock (records)
+		{
+			candidates = records.Candidates();
+		}
+
+		await Task.WhenAll(candidates.Select(async candidate =>
+		{
+			try
+			{
+				if (await IsPortOpenAsync(IPAddress.Parse(candidate.Deck.Address), candidate.Deck.HttpPort, ct))
+				{
+					reachable.Add(candidate.Deck);
+					return;
+				}
+			}
+			catch (Exception e) when (NetworkDiagnostics.IsBlockedByFirewall(e))
+			{
+				blocked = true;
+			}
+
+			unreachable.Add(candidate.Resolved ? candidate.Deck : candidate.Deck with { Address = string.Empty });
+		}));
+
+		if (reachable.IsEmpty && !blocked)
 		{
 			blocked = await NetworkDiagnostics.IsLocalNetworkBlockedAsync(ct);
 		}
 
-		return new DiscoveryResult(found.Values.ToList(), blocked && found.IsEmpty);
+		// Один и тот же Deck отвечает с каждого адаптера ПК
+		List<DiscoveredDeck> decks = reachable.DistinctBy(d => d.Address).ToList();
+		List<DiscoveredDeck> missed = unreachable
+			.Where(u => decks.All(d => !string.Equals(d.Name, u.Name, StringComparison.OrdinalIgnoreCase)))
+			.DistinctBy(d => (d.Name, d.Address))
+			.ToList();
+		return new DiscoveryResult(decks, blocked && decks.Count == 0, missed);
 	}
 
 	// Подсети физических адаптеров, которые имеет смысл перебирать: не шире /22, без link-local 169.254/16
@@ -102,7 +138,7 @@ public static class DeckDiscovery
 		return new DiscoveryResult(found.ToList(), blocked && found.IsEmpty);
 	}
 
-	private static async Task QueryAsync(IPAddress local, TimeSpan scanTime, ConcurrentDictionary<string, DiscoveredDeck> found, CancellationToken ct)
+	private static async Task QueryAsync(IPAddress local, TimeSpan scanTime, MdnsRecords records, CancellationToken ct)
 	{
 		using var udp = new UdpClient(new IPEndPoint(local, 0));
 		udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, local.GetAddressBytes());
@@ -130,14 +166,24 @@ public static class DeckDiscovery
 			}
 		}, TaskScheduler.Default);
 
+		// SRV и A могут прийти отдельными пакетами или не прийти вовсе (ретранслятор пересылает только PTR) —
+		// записи копятся со всех пакетов, а недостающие дозапрашиваются по одному разу
+		var asked = new HashSet<(string, ushort)>();
 		try
 		{
 			while (true)
 			{
 				UdpReceiveResult response = await udp.ReceiveAsync(timeout.Token);
-				foreach (DiscoveredDeck deck in ParseResponse(response.Buffer, response.RemoteEndPoint.Address))
+				List<(string Name, ushort Type)> missing;
+				lock (records)
 				{
-					found[deck.Address] = deck;
+					records.Add(response.Buffer, response.RemoteEndPoint.Address);
+					missing = records.Missing().Where(asked.Add).ToList();
+				}
+
+				if (missing.Count > 0)
+				{
+					await udp.SendAsync(BuildQuery(missing), MdnsGroup, timeout.Token);
 				}
 			}
 		}
@@ -150,107 +196,153 @@ public static class DeckDiscovery
 	// Запрос PTR для _steamos-devkit._tcp.local с битом «ответить unicast»
 	internal static byte[] BuildQuery()
 	{
+		return BuildQuery([(ServiceName, TypePtr)]);
+	}
+
+	internal static byte[] BuildQuery(IReadOnlyList<(string Name, ushort Type)> questions)
+	{
 		var packet = new List<byte>(new byte[12]);
-		packet[5] = 1; // QDCOUNT = 1
-		foreach (string label in ServiceName.Split('.'))
+		packet[4] = (byte)(questions.Count >> 8); // QDCOUNT
+		packet[5] = (byte)questions.Count;
+		foreach ((string name, ushort type) in questions)
 		{
-			packet.Add((byte)label.Length);
-			packet.AddRange(Encoding.ASCII.GetBytes(label));
+			foreach (string label in name.Split('.', StringSplitOptions.RemoveEmptyEntries))
+			{
+				byte[] bytes = Encoding.UTF8.GetBytes(label);
+				packet.Add((byte)bytes.Length);
+				packet.AddRange(bytes);
+			}
+
+			packet.AddRange([0, (byte)(type >> 8), (byte)type, 0x80, 0x01]);
 		}
 
-		packet.AddRange([0, 0, (byte)TypePtr, 0x80, 0x01]);
 		return packet.ToArray();
 	}
 
+	// Разбор одного пакета; адрес без A-записи — адрес отправителя, его ещё надо проверить
 	internal static IReadOnlyList<DiscoveredDeck> ParseResponse(byte[] data, IPAddress sender)
 	{
-		if (data.Length < 12)
+		var records = new MdnsRecords();
+		records.Add(data, sender);
+		return records.Candidates().Select(c => c.Deck).ToList();
+	}
+
+	// Записи mDNS, накопленные со всех ответов: экземпляры службы, их SRV и TXT, A-записи имён хостов
+	internal sealed class MdnsRecords
+	{
+		private readonly List<string> m_instances = [];
+		private readonly Dictionary<string, IPAddress> m_senders = new(StringComparer.OrdinalIgnoreCase);
+		private readonly Dictionary<string, (int Port, string Target)> m_ports = new(StringComparer.OrdinalIgnoreCase);
+		private readonly Dictionary<string, string> m_logins = new(StringComparer.OrdinalIgnoreCase);
+		private readonly Dictionary<string, IPAddress> m_addresses = new(StringComparer.OrdinalIgnoreCase);
+
+		public void Add(byte[] data, IPAddress sender)
 		{
-			return [];
-		}
-
-		var instances = new List<string>();
-		var ports = new Dictionary<string, (int Port, string Target)>(StringComparer.OrdinalIgnoreCase);
-		var logins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-		var addresses = new Dictionary<string, IPAddress>(StringComparer.OrdinalIgnoreCase);
-
-		try
-		{
-			int questions = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(4));
-			int records = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(6)) +
-			              BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(8)) +
-			              BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(10));
-			int offset = 12;
-
-			for (int i = 0; i < questions; i++)
+			if (data.Length < 12)
 			{
-				ReadName(data, ref offset);
-				offset += 4;
+				return;
 			}
 
-			for (int i = 0; i < records; i++)
+			try
 			{
-				string owner = ReadName(data, ref offset);
-				ushort type = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(offset));
-				int length = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(offset + 8));
-				int rdata = offset + 10;
-				offset = rdata + length;
+				int questions = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(4));
+				int records = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(6)) +
+				              BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(8)) +
+				              BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(10));
+				int offset = 12;
 
-				switch (type)
+				for (int i = 0; i < questions; i++)
 				{
-					case TypePtr when owner.Equals(ServiceName, StringComparison.OrdinalIgnoreCase):
-						int ptr = rdata;
-						instances.Add(ReadName(data, ref ptr));
-						break;
-					case TypeSrv:
-						int target = rdata + 6;
-						ports[owner] = (BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(rdata + 4)), ReadName(data, ref target));
-						break;
-					case TypeTxt:
-						foreach (string entry in ReadTxt(data, rdata, length))
-						{
-							if (entry.StartsWith("login=", StringComparison.Ordinal))
+					ReadName(data, ref offset);
+					offset += 4;
+				}
+
+				for (int i = 0; i < records; i++)
+				{
+					string owner = ReadName(data, ref offset);
+					ushort type = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(offset));
+					int length = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(offset + 8));
+					int rdata = offset + 10;
+					offset = rdata + length;
+
+					switch (type)
+					{
+						case TypePtr when owner.Equals(ServiceName, StringComparison.OrdinalIgnoreCase):
+							int ptr = rdata;
+							string instance = ReadName(data, ref ptr);
+							if (!m_instances.Contains(instance, StringComparer.OrdinalIgnoreCase))
 							{
-								logins[owner] = entry[6..];
+								m_instances.Add(instance);
 							}
-						}
-						break;
-					case TypeA when length == 4:
-						addresses[owner] = new IPAddress(data.AsSpan(rdata, 4));
-						break;
+
+							m_senders.TryAdd(instance, sender);
+							break;
+						case TypeSrv:
+							int target = rdata + 6;
+							m_ports[owner] = (BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(rdata + 4)), ReadName(data, ref target));
+							break;
+						case TypeTxt:
+							foreach (string entry in ReadTxt(data, rdata, length))
+							{
+								if (entry.StartsWith("login=", StringComparison.Ordinal))
+								{
+									m_logins[owner] = entry[6..];
+								}
+							}
+							break;
+						case TypeA when length == 4:
+							m_addresses[owner] = new IPAddress(data.AsSpan(rdata, 4));
+							break;
+					}
 				}
 			}
-		}
-		catch (ArgumentOutOfRangeException)
-		{
-			// обрезанный пакет: берём то, что успели разобрать
-		}
-		catch (IndexOutOfRangeException)
-		{
-			// то же
-		}
-
-		var result = new List<DiscoveredDeck>();
-		foreach (string instance in instances.Distinct(StringComparer.OrdinalIgnoreCase))
-		{
-			int port = DevkitService.DefaultPort;
-			IPAddress address = sender;
-			if (ports.TryGetValue(instance, out (int Port, string Target) srv))
+			catch (ArgumentOutOfRangeException)
 			{
-				port = srv.Port;
-				if (addresses.TryGetValue(srv.Target, out IPAddress? a))
-				{
-					address = a;
-				}
+				// обрезанный пакет: берём то, что успели разобрать
 			}
-
-			string name = instance.EndsWith("." + ServiceName, StringComparison.OrdinalIgnoreCase)
-				? instance[..^(ServiceName.Length + 1)]
-				: instance;
-			result.Add(new DiscoveredDeck(name, address.ToString(), port, logins.GetValueOrDefault(instance)));
+			catch (IndexOutOfRangeException)
+			{
+				// то же
+			}
 		}
 
-		return result;
+		// Чего не хватает, чтобы узнать адрес: SRV экземпляра или A-записи его хоста
+		public IEnumerable<(string Name, ushort Type)> Missing()
+		{
+			foreach (string instance in m_instances)
+			{
+				if (!m_ports.TryGetValue(instance, out (int Port, string Target) srv))
+				{
+					yield return (instance, TypeSrv);
+				}
+				else if (!m_addresses.ContainsKey(srv.Target))
+				{
+					yield return (srv.Target, TypeA);
+				}
+			}
+		}
+
+		public IReadOnlyList<(DiscoveredDeck Deck, bool Resolved)> Candidates()
+		{
+			var result = new List<(DiscoveredDeck, bool)>();
+			foreach (string instance in m_instances)
+			{
+				int port = DevkitService.DefaultPort;
+				IPAddress? address = null;
+				if (m_ports.TryGetValue(instance, out (int Port, string Target) srv))
+				{
+					port = srv.Port;
+					m_addresses.TryGetValue(srv.Target, out address);
+				}
+
+				string name = instance.EndsWith("." + ServiceName, StringComparison.OrdinalIgnoreCase)
+					? instance[..^(ServiceName.Length + 1)]
+					: instance;
+				result.Add((new DiscoveredDeck(name, (address ?? m_senders[instance]).ToString(), port, m_logins.GetValueOrDefault(instance)), address != null));
+			}
+
+			return result;
+		}
 	}
 
 	// Имена DNS со сжатием (RFC 1035, 4.1.4); offset сдвигается только по несжатой части

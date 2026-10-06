@@ -219,6 +219,21 @@ internal sealed partial class MainWindow : Window
 		{
 			DiscoveryResult result = await Task.Run(() => DeckDiscovery.FindAsync(TimeSpan.FromSeconds(3), m_lifetime.Token));
 
+			// Deck ответил по mDNS (через офисный ретранслятор), но с этого ПК до него не достучаться — перебор своих подсетей
+			// его тоже не найдёт, поэтому сразу объясняем
+			if (result.Decks.Count == 0 && !result.BlockedByFirewall && result.Unreachable is { Count: > 0 } missed)
+			{
+				SetStatus("Deck найден, но недоступен с этого ПК");
+				await Dialogs.Info(this,
+					"Deck ответил на поиск, но его служба devkit (порт 32000) с этого ПК недоступна:\n" +
+					string.Join("\n", missed.Select(d => $"• {d.Name} — {(d.Address.Length > 0 ? d.Address : "адрес в ответе не пришёл")}")) + "\n\n" +
+					"Скорее всего, ПК и Deck в разных сетях, например ПК подключён кабелем, а Deck — по Wi-Fi, и офисная сеть их не соединяет. " +
+					"Подключите ПК к той же сети Wi-Fi или Deck — кабелем (USB-C хаб с Ethernet) и повторите поиск. " +
+					"Если адрес Deck известен (Настройки → Интернет на Deck), его можно добавить вручную.",
+					"Поиск Deck");
+				return;
+			}
+
 			// Офисные и гостевые сети часто режут multicast — тогда спрашиваем, можно ли перебрать свои подсети
 			IReadOnlyList<LocalNetwork> networks = DeckDiscovery.ScannableNetworks();
 			if (result.Decks.Count == 0 && !result.BlockedByFirewall && networks.Count > 0 &&

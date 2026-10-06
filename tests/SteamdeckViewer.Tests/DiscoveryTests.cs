@@ -136,6 +136,71 @@ public sealed class DiscoveryTests
 		Assert.NotNull(result.Decks);
 	}
 
+	// Офисный ретранслятор mDNS (10.23.2.3) переслал только PTR, SRV и A пришли отдельно — адрес берётся из A-записи,
+	// а недостающее приложение дозапрашивает
+	[Fact]
+	public void CombinesRecordsFromSeveralPacketsAndAsksForMissing()
+	{
+		var ptr = new DnsPacket();
+		ptr.Header(answers: 1, additional: 0);
+		int service = ptr.Name("_steamos-devkit", "_tcp", "local");
+		ptr.Rest(12, rdata => rdata.NameWithPointer(["steamdeckX"], service), out _);
+
+		var srv = new DnsPacket();
+		srv.Header(answers: 1, additional: 0);
+		srv.Record(["steamdeckX", "_steamos-devkit", "_tcp", "local"], 33, rdata =>
+		{
+			rdata.U16(0);
+			rdata.U16(0);
+			rdata.U16(32000);
+			rdata.Name("steamdeckX", "local");
+		});
+
+		var a = new DnsPacket();
+		a.Header(answers: 1, additional: 0);
+		a.Record(["steamdeckX", "local"], 1, rdata => rdata.Bytes(10, 23, 3, 120));
+
+		var records = new DeckDiscovery.MdnsRecords();
+		records.Add(ptr.ToArray(), IPAddress.Parse("10.23.2.3"));
+
+		// Только PTR: адрес — отправителя, но он не подтверждён, и нужен SRV
+		(DiscoveredDeck deck, bool resolved) = Assert.Single(records.Candidates());
+		Assert.Equal(("10.23.2.3", false), (deck.Address, resolved));
+		Assert.Equal([("steamdeckX._steamos-devkit._tcp.local", (ushort)33)], records.Missing());
+
+		records.Add(srv.ToArray(), IPAddress.Parse("10.23.2.3"));
+		Assert.Equal([("steamdeckX.local", (ushort)1)], records.Missing());
+
+		records.Add(a.ToArray(), IPAddress.Parse("10.23.2.3"));
+		Assert.Empty(records.Missing());
+		(deck, resolved) = Assert.Single(records.Candidates());
+		Assert.Equal(("steamdeckX", "10.23.3.120", 32000, true), (deck.Name, deck.Address, deck.HttpPort, resolved));
+	}
+
+	[Fact]
+	public void FollowUpQueryHasEveryQuestionWithUnicastBit()
+	{
+		byte[] query = DeckDiscovery.BuildQuery([("steamdeckX._steamos-devkit._tcp.local", 33), ("steamdeckX.local", 1)]);
+
+		Assert.Equal(2, BinaryPrimitives.ReadUInt16BigEndian(query.AsSpan(4)));
+		Assert.Equal(
+			"\u000asteamdeckX\u000f_steamos-devkit\u0004_tcp\u0005local\0\0!\u0080\u0001" +
+			"\u000asteamdeckX\u0005local\0\0\u0001\u0080\u0001",
+			Encoding.Latin1.GetString(query, 12, query.Length - 12));
+	}
+
+	[Theory]
+	[InlineData("SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u4", true)]
+	[InlineData("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13", true)]
+	[InlineData("SSH-2.0-OpenSSH_for_Windows_9.5", true)]
+	[InlineData("SSH-2.0-dropbear_2022.83", true)]
+	[InlineData("SSH-2.0-OpenSSH_9.9", false)]
+	public void TellsSteamOsFromOtherSshServers(string version, bool notSteamOs)
+	{
+		Assert.Equal(notSteamOs, new DeckAuthenticationException(version, new Exception("x")).IsNotSteamOs);
+		Assert.False(new DeckAuthenticationException(null, new Exception("x")).IsNotSteamOs);
+	}
+
 	[Fact]
 	public void RecognizesFirewallBlock()
 	{
