@@ -573,9 +573,14 @@ internal sealed partial class MainWindow : Window
 		return e switch
 		{
 			_ when NetworkDiagnostics.IsBlockedByFirewall(e) => NetworkDiagnostics.VpnAdvice(device.Host),
-			SshAuthenticationException =>
-				$"Deck ({device.User}@{device.Host}) не принял SSH-ключ.\n\n" +
-				"Выполните «Сопрячь (Developer Mode)» или «Ключ по паролю…».",
+			DeckAuthenticationException { IsNotSteamOs: true } a =>
+				$"По адресу {device.Host} отвечает не Steam Deck: сервер SSH представился как «{a.ServerVersion}», а это не SteamOS. " +
+				"Наш ключ он, конечно, не принимает.\n\n" +
+				"Скорее всего, адрес Deck сменился. Посмотрите его на Deck (Настройки → Интернет → сеть → IP-адрес) и исправьте кнопкой «Изменить…».",
+			DeckAuthenticationException or SshAuthenticationException =>
+				$"{device.User}@{device.Host} не принял SSH-ключ приложения.\n\n" +
+				"Если адрес Deck сменился, по старому адресу может отвечать другое устройство: проверьте IP на Deck (Настройки → Интернет) " +
+				"и исправьте его кнопкой «Изменить…». Если это тот же Deck, выполните «Сопрячь (Developer Mode)» или «Ключ по паролю…».",
 			SocketException { SocketErrorCode: SocketError.ConnectionRefused } =>
 				$"SSH на {device.Host}:{device.SshPort} не отвечает (соединение отклонено).\n\n" +
 				"Сопрягите Deck через Developer Mode или включите SSH в Konsole: sudo systemctl enable --now sshd",

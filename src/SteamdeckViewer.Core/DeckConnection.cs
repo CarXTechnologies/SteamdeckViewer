@@ -17,6 +17,22 @@ public sealed class HostKeyMismatchException(string expected, string actual)
 	public string Actual { get; } = actual;
 }
 
+// Сервер не принял ни один ключ. «Too many authentication failures» приходит не как ошибка входа, а как разрыв соединения,
+// поэтому оба случая сводятся сюда. ServerVersion — как представился сервер: по нему видно, SteamOS ли это вообще
+public sealed class DeckAuthenticationException(string? serverVersion, Exception inner) : Exception(inner.Message, inner)
+{
+	public string? ServerVersion { get; } = serverVersion;
+
+	// На SteamOS (Arch) OpenSSH не дописывает дистрибутив к версии, у Debian, Ubuntu и прочих он есть
+	public bool IsNotSteamOs => ServerVersion != null &&
+	                            (ServerVersion.Contains("Debian", StringComparison.OrdinalIgnoreCase) ||
+	                             ServerVersion.Contains("Ubuntu", StringComparison.OrdinalIgnoreCase) ||
+	                             ServerVersion.Contains("Raspbian", StringComparison.OrdinalIgnoreCase) ||
+	                             ServerVersion.Contains("FreeBSD", StringComparison.OrdinalIgnoreCase) ||
+	                             ServerVersion.Contains("Windows", StringComparison.OrdinalIgnoreCase) ||
+	                             !ServerVersion.Contains("OpenSSH", StringComparison.OrdinalIgnoreCase));
+}
+
 // Подключение к Deck по SSH: команды, потоки вывода, ввод в stdin и SFTP поверх отдельной сессии
 public sealed class DeckConnection : IDisposable
 {
@@ -82,6 +98,13 @@ public sealed class DeckConnection : IDisposable
 			string actual = connection.HostKeyFingerprint;
 			connection.Dispose();
 			throw new HostKeyMismatchException(device.HostKeyFingerprint ?? string.Empty, actual);
+		}
+		catch (Exception e) when (e is SshAuthenticationException ||
+		                          e is SshConnectionException && e.Message.Contains("authentication", StringComparison.OrdinalIgnoreCase))
+		{
+			string? serverVersion = connection.m_ssh.ConnectionInfo?.ServerVersion;
+			connection.Dispose();
+			throw new DeckAuthenticationException(serverVersion, e);
 		}
 		catch
 		{
