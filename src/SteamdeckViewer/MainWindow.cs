@@ -17,7 +17,11 @@ internal sealed partial class MainWindow : Window
 	private readonly CancellationTokenSource m_lifetime = new();
 
 	private DeckConnection? m_deck;
-	private int m_busyCount;
+
+	// Идущие операции и последний итог для строки состояния (см. BeginBusy)
+	private readonly List<BusyOperation> m_operations = [];
+	private readonly DispatcherTimer m_statusResult = new() { Interval = TimeSpan.FromSeconds(4) };
+	private string m_lastStatusText = string.Empty;
 
 	// Устройство и подключение
 	private readonly ComboBox m_cbDevices = new() { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
@@ -42,6 +46,11 @@ internal sealed partial class MainWindow : Window
 		WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
 		Content = BuildLayout();
+		m_statusResult.Tick += (_, _) =>
+		{
+			m_statusResult.Stop();
+			ShowStatus();
+		};
 
 		ReloadDevices();
 		m_cbDevices.SelectionChanged += (_, _) => OnDeviceSelected();
@@ -229,7 +238,7 @@ internal sealed partial class MainWindow : Window
 
 	private async Task DiscoverAsync()
 	{
-		SetBusy(true, "Поиск Deck в сети (mDNS)…");
+		BusyOperation busyOperation = BeginBusy("Поиск Deck в сети (mDNS)…");
 		try
 		{
 			DiscoveryResult result = await Task.Run(() => DeckDiscovery.FindAsync(TimeSpan.FromSeconds(3), m_lifetime.Token));
@@ -310,7 +319,7 @@ internal sealed partial class MainWindow : Window
 		}
 		finally
 		{
-			SetBusy(false);
+			EndBusy(busyOperation);
 		}
 	}
 
@@ -381,7 +390,7 @@ internal sealed partial class MainWindow : Window
 			return;
 		}
 
-		SetBusy(true, $"Связь со службой devkit на {device.Host}:{device.DevkitPort}…");
+		BusyOperation busyOperation = BeginBusy($"Связь со службой devkit на {device.Host}:{device.DevkitPort}…");
 		try
 		{
 			DevkitProperties? properties = await DevkitService.GetPropertiesAsync(device.Host, device.DevkitPort, m_lifetime.Token);
@@ -422,7 +431,7 @@ internal sealed partial class MainWindow : Window
 		}
 		finally
 		{
-			SetBusy(false);
+			EndBusy(busyOperation);
 		}
 
 		Disconnect();
@@ -447,7 +456,7 @@ internal sealed partial class MainWindow : Window
 			return;
 		}
 
-		SetBusy(true, "Установка ключа…");
+		BusyOperation busyOperation = BeginBusy("Установка ключа…");
 		try
 		{
 			string publicKey = DeckKeys.EnsureKeyPair();
@@ -464,7 +473,7 @@ internal sealed partial class MainWindow : Window
 		}
 		finally
 		{
-			SetBusy(false);
+			EndBusy(busyOperation);
 		}
 
 		Disconnect();
@@ -494,7 +503,7 @@ internal sealed partial class MainWindow : Window
 			return;
 		}
 
-		SetBusy(true, $"Подключение к {device.User}@{device.Host}…");
+		BusyOperation busyOperation = BeginBusy($"Подключение к {device.User}@{device.Host}…");
 		m_btnConnect.IsEnabled = false;
 		try
 		{
@@ -516,7 +525,7 @@ internal sealed partial class MainWindow : Window
 		finally
 		{
 			m_btnConnect.IsEnabled = true;
-			SetBusy(false);
+			EndBusy(busyOperation);
 			UpdateConnectionState();
 		}
 
@@ -633,7 +642,7 @@ internal sealed partial class MainWindow : Window
 		}
 
 		CancellationToken ct = token ?? m_lifetime.Token;
-		SetBusy(true, busyText);
+		BusyOperation busyOperation = BeginBusy(busyText);
 		try
 		{
 			await Task.Run(() => work(deck, ct), CancellationToken.None);
@@ -674,23 +683,50 @@ internal sealed partial class MainWindow : Window
 		}
 		finally
 		{
-			SetBusy(false);
+			EndBusy(busyOperation);
 		}
 	}
 
-	private void SetBusy(bool busy, string? status = null)
+	// Строка состояния при нескольких операциях сразу (скачивание и остановка игры): видна подпись последней начатой.
+	// Итог завершившейся операции держится несколько секунд и уступает место подписи той, что ещё идёт
+	private sealed class BusyOperation(string text)
 	{
-		m_busyCount = Math.Max(0, m_busyCount + (busy ? 1 : -1));
-		m_statusBusy.IsVisible = m_busyCount > 0;
-		if (status != null)
-		{
-			SetStatus(status);
-		}
+		public string Text { get; } = text;
+	}
+
+	private BusyOperation BeginBusy(string text)
+	{
+		var operation = new BusyOperation(text);
+		m_operations.Add(operation);
+		m_statusResult.Stop();
+		ShowStatus();
+		return operation;
+	}
+
+	private void EndBusy(BusyOperation operation)
+	{
+		m_operations.Remove(operation);
+		ShowStatus();
 	}
 
 	private void SetStatus(string text)
 	{
+		m_lastStatusText = text;
 		m_statusText.Text = text;
+		m_statusResult.Stop();
+		if (m_operations.Count > 0)
+		{
+			m_statusResult.Start();
+		}
+	}
+
+	private void ShowStatus()
+	{
+		m_statusBusy.IsVisible = m_operations.Count > 0;
+		if (!m_statusResult.IsEnabled)
+		{
+			m_statusText.Text = m_operations.Count > 0 ? m_operations[^1].Text : m_lastStatusText;
+		}
 	}
 
 	private void ChangeTheme(AppColorMode mode)
