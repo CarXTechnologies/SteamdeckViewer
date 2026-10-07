@@ -49,17 +49,20 @@ internal sealed partial class MainWindow
 					"или «<Enter IP>» с IP Deck. Нужна Development-сборка."
 			},
 			Ui.Row(Ui.Button("Скопировать IP для Profiler", CopyDeckIpAsync)),
+			Ui.Note("Запись в файл — только для Development-билда, залитого через программу и запущенного её кнопками или из Unity. " +
+			        "На игры из магазина Steam и другие ярлыки в библиотеке Deck не действует."),
 			m_cbRecordProfiler,
 			Ui.Row(new TextBlock { Text = "Записать кадров:", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center }, m_tbProfilerFrames),
 			Ui.Row(
 				Ui.Button("Скачать последнюю запись…", DownloadProfilerRecordingAsync),
 				Ui.Button("Удалить записи на Deck", DeleteProfilerRecordingsAsync)),
 			Ui.Hint("Запись в файл: игра стартует с -profiler-enable -profiler-log-file и пишет .raw на Deck с первого кадра, " +
-			        "включая загрузку, а сеть на замеры не влияет. Работает в Development-сборке и при запуске кнопками программы " +
-			        "(и из Unity). Без лимита кадров файл растёт, пока игра запущена, — закройте её перед скачиванием. " +
+			        "включая загрузку, а сеть на замеры не влияет. Без лимита кадров файл растёт, пока игра запущена, — закройте её перед скачиванием. " +
 			        "Открыть запись: Unity → Profiler → Load.")));
 
 		var mangoHudGroup = Ui.Group("Производительность Deck (MangoHud)", Ui.Column(10,
+			Ui.Note("Только для билда, залитого через программу и запущенного её кнопками или из Unity. " +
+			        "На игры из магазина Steam и другие ярлыки в библиотеке Deck не действует."),
 			m_cbMangoHudOverlay,
 			m_cbMangoHudLog,
 			Ui.Row(new TextBlock { Text = "Записать секунд:", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center }, m_tbMangoHudSeconds),
@@ -67,8 +70,8 @@ internal sealed partial class MainWindow
 				Ui.Button("Скачать последний замер…", DownloadMangoHudLogAsync),
 				Ui.Button("Удалить замеры на Deck", DeleteMangoHudLogsAsync)),
 			Ui.Hint("MangoHud входит в SteamOS. Оверлей показывает FPS, время кадра с графиком, загрузку, температуры и мощность CPU/GPU, " +
-			        "память и батарею; запись пишет то же в CSV на каждый кадр. Включается при следующем запуске кнопками программы " +
-			        "(и из Unity), Development-сборка не нужна. После скачивания программа покажет итоги: средний FPS, 1% и 0,1% low, " +
+			        "память и батарею; запись пишет то же в CSV на каждый кадр. Включается со следующего запуска, " +
+			        "Development-сборка не нужна. После скачивания программа покажет итоги: средний FPS, 1% и 0,1% low, " +
 			        "время кадра, загрузку, температуры. Profiler показывает, что происходит внутри игры, а MangoHud — как ведёт себя железо.")));
 
 		var prepareGroup = Ui.Group("Подготовка билда", new SelectableTextBlock

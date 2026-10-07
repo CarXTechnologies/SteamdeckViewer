@@ -85,6 +85,12 @@ internal static class Ui
 		return new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
 	}
 
+	// Ограничение, которое легко пропустить: не приглушено, в отличие от Hint
+	public static TextBlock Note(string text)
+	{
+		return new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontWeight = FontWeight.SemiBold };
+	}
+
 	public static TextBox LogBox()
 	{
 		var box = new TextBox
