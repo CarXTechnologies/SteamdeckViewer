@@ -10,7 +10,7 @@ using SteamdeckViewer.Core;
 
 namespace SteamdeckViewer;
 
-// Главное окно: сверху выбор Deck и подключение, ниже вкладки (устройство, файлы, билды, отладка, консоль)
+// Главное окно: сверху выбор Deck и подключение, ниже вкладки (устройство, экран, билды, отладка, файлы, консоль)
 internal sealed partial class MainWindow : Window
 {
 	private readonly AppSettings m_settings = AppSettings.Current;
@@ -99,10 +99,11 @@ internal sealed partial class MainWindow : Window
 		m_tabs.Resources["TabItemHeaderFontSize"] = 17.0;
 		m_tabs.Items.Add(new TabItem { Header = "Устройство", Content = BuildDeviceTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Экран", Content = BuildScreenTab() });
-		m_tabs.Items.Add(new TabItem { Header = "Файлы", Content = BuildFilesTab() });
+		var filesTab = new TabItem { Header = "Файлы", Content = BuildFilesTab() };
 		m_buildsTab.Content = BuildBuildsTab();
 		m_tabs.Items.Add(m_buildsTab);
-		m_tabs.Items.Add(new TabItem { Header = "Отладка (Rider)", Content = BuildDebugTab() });
+		m_tabs.Items.Add(new TabItem { Header = "Отладка", Content = BuildDebugTab() });
+		m_tabs.Items.Add(filesTab);
 		m_tabs.Items.Add(new TabItem { Header = "Консоль", Content = BuildConsoleTab() });
 
 		Control menu = BuildMenu();
