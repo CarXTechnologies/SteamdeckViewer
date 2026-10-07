@@ -415,3 +415,57 @@ public sealed class DevkitGamesLinuxTests
 		Assert.Equal("0", status["steam"]);
 	}
 }
+
+public sealed class DeckScreenshotLinuxTests
+{
+	// Поддельные pgrep (сеанс из FAKE_SESSION), gamescopectl (пишет файл с задержкой, как gamescope после кадра),
+	// systemd-run (запускает команду после своих ключей) и spectacle
+	private const string FakeTools = """
+		mkdir -p ~/bin
+		cat > ~/bin/pgrep <<'X'
+		#!/bin/sh
+		case "$2" in *gamescope*) [ "$FAKE_SESSION" = game ];; *kwin*) [ "$FAKE_SESSION" = desktop ];; *) exit 1;; esac
+		X
+		cat > ~/bin/gamescopectl <<'X'
+		#!/bin/sh
+		[ "$1" = screenshot ] && (sleep 0.3; printf 'GAMESCOPE' > "$2") &
+		X
+		cat > ~/bin/systemd-run <<'X'
+		#!/bin/sh
+		while [ "${1#-}" != "$1" ]; do [ "$1" = -p ] && shift; shift; done
+		exec "$@"
+		X
+		cat > ~/bin/spectacle <<'X'
+		#!/bin/sh
+		while [ $# -gt 0 ]; do [ "$1" = --output ] && printf 'SPECTACLE' > "$2"; shift; done
+		X
+		chmod +x ~/bin/*
+		export PATH="$HOME/bin:$PATH"
+		""";
+
+	private static CommandResult Take(string session)
+	{
+		string home = Wsl.NewHome();
+		string file = home + "/shot.png";
+		return Wsl.Run($"export FAKE_SESSION={session}\n" + FakeTools + Wsl.Subshell(DeckScreenshot.Script(file)) +
+		               $"\necho \"|EXIT=$?\"; cat {file} 2>/dev/null", home);
+	}
+
+	[WslFact]
+	public void GameModeShotWaitsForGamescope()
+	{
+		Assert.Contains("|EXIT=0\nGAMESCOPE", Take("game").Output);
+	}
+
+	[WslFact]
+	public void DesktopShotUsesSpectacle()
+	{
+		Assert.Contains("|EXIT=0\nSPECTACLE", Take("desktop").Output);
+	}
+
+	[WslFact]
+	public void NoSessionNoShot()
+	{
+		Assert.Equal("|EXIT=2", Take("none").Output.Trim());
+	}
+}
