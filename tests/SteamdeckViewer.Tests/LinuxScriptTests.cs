@@ -104,6 +104,24 @@ public sealed class FolderSyncLinuxTests
 		Assert.Equal("./b\n./b/d", result.Output.Trim());
 	}
 
+	// Файлы без расширения игра проверяет, только если они начинаются как исполняемые (ELF, #!, Mach-O)
+	[WslFact]
+	public void HeaderProbeFindsExecutablesWithoutExtension()
+	{
+		string home = Wsl.NewHome();
+		const string remote = "~/game";
+		string setup =
+			$"mkdir -p {Sh.Path(remote)}/'sub dir' && cd {Sh.Path(remote)} && " +
+			"printf '\\177ELF\\002\\001' > elf && printf '#!/bin/sh\\n' > 'sub dir/run me' && printf 'UnityFS' > level0 && printf 'ab' > short";
+		string probe = $"printf 'elf\\0sub dir/run me\\0level0\\0short\\0missing\\0' | ( {PlayerLayout.HeaderCommand(remote)} )";
+
+		CommandResult result = Wsl.Run($"{setup}\n{probe}", home);
+
+		Assert.Equal(["elf", "sub dir/run me"], PlayerLayout.ParseExecutables(result.Output).Order(StringComparer.Ordinal));
+		Assert.Contains("556e6974\tlevel0", result.Output);
+		Assert.Contains("6162\tshort", result.Output);
+	}
+
 	// Пересобранный билд: размер тот же, время новое. Хеши с «Deck» совпадают с посчитанными на ПК,
 	// а после touch листинг совпадает и по времени — следующая заливка обойдётся без хешей
 	[WslFact]

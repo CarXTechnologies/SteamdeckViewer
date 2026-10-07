@@ -51,6 +51,14 @@ public sealed class BuildProfileTests
 		Assert.Equal("CarX-Street", new BuildProfile { Name = "CarX Street" }.LegacyGameId);
 	}
 
+	// Сверка с player_layout.bundle — только для CarX Street PC, в чужих проектах её включают вручную
+	[Fact]
+	public void PlayerLayoutCheckIsOptIn()
+	{
+		Assert.False(new BuildProfile().CheckPlayerLayout);
+		Assert.False(System.Text.Json.JsonSerializer.Deserialize<BuildProfile>("{\"Name\":\"Old\"}")!.CheckPlayerLayout);
+	}
+
 	[Fact]
 	public void StartCommandQuotesExecutableWithSpaces()
 	{

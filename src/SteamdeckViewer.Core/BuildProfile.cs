@@ -39,6 +39,10 @@ public sealed class BuildProfile
 	// Проверка целостности CarX Street (player_layout.bundle) падает с E29 на любом лишнем .so/.dll в папке игры
 	public bool DeleteExtraneous { get; set; } = true;
 	public bool StopBeforeUpload { get; set; } = true;
+
+	// Сверка файлов на Deck с player_layout.bundle (PlayerLayout) — логика проверки целостности CarX Street PC,
+	// у других проектов такого индекса нет, поэтому по умолчанию выключена
+	public bool CheckPlayerLayout { get; set; }
 	public string SteamAppId { get; set; } = string.Empty;
 	public string PlayerLogPath { get; set; } = "~/.config/unity3d/CarX Technologies/CarX Street/Player.log";
 

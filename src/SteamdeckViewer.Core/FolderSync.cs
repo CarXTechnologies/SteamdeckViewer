@@ -218,7 +218,7 @@ public static class FolderSync
 		return true;
 	}
 
-	private static async Task<Dictionary<string, (long Size, long MTime)>> ListRemoteAsync(DeckConnection deck, string remoteFolder, CancellationToken ct)
+	internal static async Task<Dictionary<string, (long Size, long MTime)>> ListRemoteAsync(DeckConnection deck, string remoteFolder, CancellationToken ct)
 	{
 		CommandResult listing = await deck.RunAsync(ListCommand(remoteFolder), ct);
 		if (!listing.Success)
@@ -289,7 +289,7 @@ public static class FolderSync
 		progress?.Report(new SyncProgress("Сравнение содержимого", 0, total, 0, files.Count));
 
 		var remoteHashes = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
-		Task remote = HashRemoteAsync(deck, remoteFolder, files, (path, hash) =>
+		Task remote = HashRemoteAsync(deck, remoteFolder, files.Select(f => f.RelativePath).ToList(), (path, hash) =>
 		{
 			if (sizes.TryGetValue(path, out long size) && remoteHashes.TryAdd(path, hash))
 			{
@@ -320,13 +320,13 @@ public static class FolderSync
 			.ToHashSet(StringComparer.Ordinal);
 	}
 
-	// Файл, который на Deck не прочитался, просто не попадёт в ответ и зальётся заново
-	private static async Task HashRemoteAsync(DeckConnection deck, string remoteFolder, IReadOnlyList<LocalFile> files,
+	// Файл, который на Deck не прочитался, просто не попадёт в ответ (при заливке он уйдёт заново)
+	internal static async Task HashRemoteAsync(DeckConnection deck, string remoteFolder, IReadOnlyList<string> relativePaths,
 		Action<string, string> onHash, CancellationToken ct)
 	{
 		// Список путей может не влезть в командную строку, поэтому сначала уходит во временный файл
 		string list = "/tmp/sdv-hash-" + Guid.NewGuid().ToString("N");
-		byte[] paths = Encoding.UTF8.GetBytes(string.Join('\0', files.Select(f => f.RelativePath)) + "\0");
+		byte[] paths = Encoding.UTF8.GetBytes(string.Join('\0', relativePaths) + "\0");
 		CommandResult written = await deck.RunWithInputAsync("cat > " + Sh.Quote(list),
 			async (input, token) => await input.WriteAsync(paths, token), ct);
 		if (!written.Success)
