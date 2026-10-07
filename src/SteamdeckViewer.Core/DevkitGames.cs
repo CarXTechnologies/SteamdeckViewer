@@ -9,9 +9,9 @@ public static class DevkitGames
 {
 	public const string GamesRoot = "~/devkit-game";
 
-	public static async Task RegisterShortcutAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
+	public static async Task RegisterShortcutAsync(DeckConnection deck, BuildProfile profile, string? extraArguments, CancellationToken ct)
 	{
-		CommandResult written = await deck.RunAsync(WriteLaunchFilesScript(profile), ct);
+		CommandResult written = await deck.RunAsync(WriteLaunchFilesScript(profile, extraArguments), ct);
 		if (!written.Success)
 		{
 			throw new InvalidOperationException("Не удалось записать настройки запуска: " + written.Combined.Trim());
@@ -56,10 +56,12 @@ public static class DevkitGames
 		await deck.RunAsync($"printf '%s\\n' {Sh.Quote(profile.SteamAppId.Trim())} > {Sh.Path(profile.RemoteFolder)}/steam_appid.txt", ct);
 	}
 
-	public static async Task LaunchAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
+	public static async Task LaunchAsync(DeckConnection deck, BuildProfile profile, string? extraArguments, CancellationToken ct)
 	{
 		if (profile.LaunchMode == LaunchMode.Steam)
 		{
+			// Аргументы могли поменяться с заливки (профиль, запись профайлера): ярлык обновляется перед каждым запуском
+			await RegisterShortcutAsync(deck, profile, extraArguments, ct);
 			await SendSteamCommandAsync(deck, "run-game/", "gameid=" + profile.GameId, ct);
 			return;
 		}
@@ -69,7 +71,7 @@ public static class DevkitGames
 			throw new InvalidOperationException("Windows-билд под Proton запускается только через Steam.");
 		}
 
-		CommandResult result = await deck.RunAsync(DirectLaunchScript(profile), ct);
+		CommandResult result = await deck.RunAsync(DirectLaunchScript(profile, extraArguments), ct);
 		if (!result.Success)
 		{
 			throw new InvalidOperationException(result.ExitCode == 2
@@ -107,7 +109,7 @@ public static class DevkitGames
 	// ---------------------------------------------------------------- скрипты для Deck
 
 	// Настройки запуска в формате devkit-utils Valve: argv — одна строка «команда + аргументы» относительно папки игры
-	internal static string WriteLaunchFilesScript(BuildProfile profile)
+	internal static string WriteLaunchFilesScript(BuildProfile profile, string? extraArguments = null)
 	{
 		string id = profile.GameId;
 		string root = Sh.Path(GamesRoot);
@@ -125,7 +127,7 @@ public static class DevkitGames
 			settings["compat_tool"] = profile.Runtime == DeckRuntime.SteamLinuxRuntime3 ? "SteamLinuxRuntime_sniper" : string.Empty;
 		}
 
-		string argv = JsonSerializer.Serialize(new[] { profile.StartCommand });
+		string argv = JsonSerializer.Serialize(new[] { profile.StartCommandWith(extraArguments) });
 		string settingsJson = JsonSerializer.Serialize(settings);
 		IReadOnlyDictionary<string, string> env = profile.ParseEnvironment();
 
@@ -139,7 +141,7 @@ public static class DevkitGames
 	}
 
 	// Окружение графической сессии берём из менеджера systemd пользователя, DISPLAY — только если его там нет
-	internal static string DirectLaunchScript(BuildProfile profile)
+	internal static string DirectLaunchScript(BuildProfile profile, string? extraArguments = null)
 	{
 		string setenv = string.Join(' ', profile.ParseEnvironment().Select(kv => "--setenv=" + Sh.Quote(kv.Key + "=" + kv.Value)));
 		string unit = Sh.Quote(UnitName(profile));
@@ -148,7 +150,7 @@ public static class DevkitGames
 			$"systemctl --user stop {unit} 2>/dev/null; systemctl --user reset-failed {unit} 2>/dev/null\n" +
 			"display=''\n" +
 			"systemctl --user show-environment 2>/dev/null | grep -q '^DISPLAY=' || display='--setenv=DISPLAY=:0'\n" +
-			$"systemd-run --user --unit={unit} --collect --working-directory=\"$PWD\" $display {setenv} /bin/sh -c {Sh.Quote("exec " + profile.StartCommand)}";
+			$"systemd-run --user --unit={unit} --collect --working-directory=\"$PWD\" $display {setenv} /bin/sh -c {Sh.Quote("exec " + profile.StartCommandWith(extraArguments))}";
 	}
 
 	// Ищет процессы, чей исполняемый файл или рабочая папка внутри папки билда; так ловятся и игры под Proton

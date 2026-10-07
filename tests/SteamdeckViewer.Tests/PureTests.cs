@@ -67,6 +67,42 @@ public sealed class BuildProfileTests
 	}
 
 	[Fact]
+	public void StartCommandTakesOneOffArguments()
+	{
+		var profile = new BuildProfile { Executable = "CarX_Street.x86_64", Arguments = " -screen-fullscreen 1 " };
+		Assert.Equal("CarX_Street.x86_64 -screen-fullscreen 1 -profiler-enable", profile.StartCommandWith(" -profiler-enable "));
+		Assert.Equal("CarX_Street.x86_64 -screen-fullscreen 1", profile.StartCommandWith(null));
+		Assert.Equal("CarX_Street.x86_64 -x", new BuildProfile { Executable = "CarX_Street.x86_64", Arguments = "" }.StartCommandWith("-x"));
+	}
+
+	[Fact]
+	public void ProfilerRecordingArguments()
+	{
+		var profile = new BuildProfile { Name = "CarX Street" };
+		Assert.Equal("~/.local/share/carx-deck-tools/profiler/CarX_Street", ProfilerCapture.Folder(profile));
+		Assert.Equal("CarX_Street_20261007_123456.raw", ProfilerCapture.FileName(profile, new DateTime(2026, 10, 7, 12, 34, 56)));
+
+		Assert.Equal("-profiler-enable -profiler-log-file /home/deck/p/a.raw -profiler-maxusedmemory 268435456",
+			ProfilerCapture.Arguments("/home/deck/p/a.raw", 0));
+		Assert.EndsWith(" -profiler-capture-frame-count 600", ProfilerCapture.Arguments("/home/deck/p/a.raw", 600));
+	}
+
+	[Fact]
+	public void PicksLatestProfilerRecording()
+	{
+		var files = new Dictionary<string, (long Size, long MTime)>
+		{
+			["CarX_Street_20261007_100000.raw"] = (10, 1000),
+			["CarX_Street_20261007_120000.raw"] = (20, 3000),
+			["notes.txt"] = (1, 9000),
+			["old/CarX_Street_20261008_000000.raw"] = (5, 9000)
+		};
+
+		Assert.Equal(("CarX_Street_20261007_120000.raw", 20L), ProfilerCapture.Latest(files));
+		Assert.Null(ProfilerCapture.Latest(new Dictionary<string, (long Size, long MTime)>()));
+	}
+
+	[Fact]
 	public void ParsesEnvironment()
 	{
 		IReadOnlyDictionary<string, string> env = new BuildProfile { EnvironmentVariables = "SteamDeck=1 MANGOHUD=1;\nA=b=c junk" }.ParseEnvironment();

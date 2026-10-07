@@ -246,6 +246,8 @@ internal sealed partial class MainWindow
 		m_cbDeleteExtraneous.IsChecked = profile.DeleteExtraneous;
 		m_cbStopBeforeUpload.IsChecked = profile.StopBeforeUpload;
 		m_cbCheckLayout.IsChecked = profile.CheckPlayerLayout;
+		m_cbRecordProfiler.IsChecked = profile.RecordProfiler;
+		m_tbProfilerFrames.Text = profile.ProfilerFrameCount > 0 ? profile.ProfilerFrameCount.ToString() : string.Empty;
 		m_btnCheckLayout.IsVisible = profile.CheckPlayerLayout;
 		m_loadingProfile = false;
 		UpdateGameIdHint(profile);
@@ -378,6 +380,7 @@ internal sealed partial class MainWindow
 		SyncSummary? summary = null;
 		string? shortcutProblem = null;
 		PlayerLayoutReport? layout = null;
+		string? profilerFile = null;
 		var progress = new Progress<SyncProgress>(ShowBuildProgress);
 		bool ok = await RunOnDeckAsync("Заливка билда…", async (deck, _) =>
 		{
@@ -400,7 +403,7 @@ internal sealed partial class MainWindow
 				// Файлы уже на Deck: без ярлыка билд всё равно можно запустить напрямую, поэтому это не провал заливки
 				try
 				{
-					await DevkitGames.RegisterShortcutAsync(deck, profile, cts.Token);
+					await DevkitGames.RegisterShortcutAsync(deck, profile, null, cts.Token);
 				}
 				catch (InvalidOperationException e)
 				{
@@ -412,7 +415,7 @@ internal sealed partial class MainWindow
 			// С расхождениями игра всё равно остановится на E29: решение о запуске — за пользователем, после окна с отчётом
 			if (launchAfter && layout is not { Problems.Count: > 0 })
 			{
-				await DevkitGames.LaunchAsync(deck, profile, cts.Token);
+				profilerFile = await LaunchOnDeckAsync(deck, profile, cts.Token);
 			}
 		}, cts.Token);
 
@@ -462,6 +465,7 @@ internal sealed partial class MainWindow
 			SetStatus(launchAfter ? "Билд залит и запущен" : "Билд залит");
 			if (launchAfter)
 			{
+				LogProfilerRecording(profilerFile);
 				StartLogTail();
 			}
 		}
@@ -544,10 +548,34 @@ internal sealed partial class MainWindow
 	private async Task LaunchGameAsync()
 	{
 		BuildProfile profile = CurrentProfile;
-		if (await RunOnDeckAsync("Запуск…", (deck, ct) => DevkitGames.LaunchAsync(deck, profile, ct)))
+		string? profilerFile = null;
+		if (await RunOnDeckAsync("Запуск…", async (deck, ct) => profilerFile = await LaunchOnDeckAsync(deck, profile, ct)))
 		{
 			SetStatus($"Запущено: {profile.Name}");
+			LogProfilerRecording(profilerFile);
 			StartLogTail();
+		}
+	}
+
+	// С включённой в профиле записью профайлера игра получает аргументы записи; возвращает путь будущего .raw
+	private static async Task<string?> LaunchOnDeckAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
+	{
+		string? arguments = null;
+		string? file = null;
+		if (profile.RecordProfiler)
+		{
+			(arguments, file) = await ProfilerCapture.PrepareAsync(deck, profile, DateTime.Now, ct);
+		}
+
+		await DevkitGames.LaunchAsync(deck, profile, arguments, ct);
+		return file;
+	}
+
+	private void LogProfilerRecording(string? file)
+	{
+		if (file != null)
+		{
+			m_playerLog.Append($"[CarX Deck Tools] запись профайлера: {file} (вкладка «Отладка» → «Скачать последнюю запись»)");
 		}
 	}
 

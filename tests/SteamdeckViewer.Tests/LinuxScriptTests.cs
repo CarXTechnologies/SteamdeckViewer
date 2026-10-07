@@ -304,6 +304,18 @@ public sealed class DevkitGamesLinuxTests
 		Assert.Equal("1", JsonSerializer.Deserialize<Dictionary<string, string>>(lines[2])!["SteamDeck"]);
 	}
 
+	// Запуск с записью профайлера: аргументы на один запуск дописываются к аргументам профиля в argv.json
+	[WslFact]
+	public void LaunchFilesCarryOneOffArguments()
+	{
+		string extra = ProfilerCapture.Arguments("/home/deck/.local/share/carx-deck-tools/profiler/CarX_Street/a.raw", 300);
+		CommandResult result = Wsl.Run(DevkitGames.WriteLaunchFilesScript(Profile, extra) + "\necho; cat ~/devkit-game/CarX_Street-argv.json", Wsl.NewHome());
+		Assert.True(result.Success, result.Combined);
+
+		string argv = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)[0];
+		Assert.Equal(["CarX_Street.x86_64 -screen-fullscreen 1 " + extra], JsonSerializer.Deserialize<string[]>(argv)!);
+	}
+
 	[WslFact]
 	public void StopKillsOnlyGameProcesses()
 	{
@@ -336,6 +348,7 @@ public sealed class DevkitGamesLinuxTests
 		foreach (string script in new[]
 		         {
 			         DevkitGames.DirectLaunchScript(Profile),
+			         DevkitGames.DirectLaunchScript(Profile, ProfilerCapture.Arguments("/home/deck/p/a.raw", 100)),
 			         DevkitGames.StopScript(Profile),
 			         DevkitGames.WriteLaunchFilesScript(Profile),
 			         DevkitGames.SteamCommandScript("run-game/", "gameid=x", "/tmp/sdv-z"),

@@ -43,6 +43,12 @@ public sealed class BuildProfile
 	// Сверка файлов на Deck с player_layout.bundle (PlayerLayout) — логика проверки целостности CarX Street PC,
 	// у других проектов такого индекса нет, поэтому по умолчанию выключена
 	public bool CheckPlayerLayout { get; set; }
+
+	// Запись Unity Profiler в .raw на Deck с первого кадра (ProfilerCapture); только для Development-сборок
+	public bool RecordProfiler { get; set; }
+
+	// Сколько кадров записать; 0 — пока игра не закрыта
+	public int ProfilerFrameCount { get; set; }
 	public string SteamAppId { get; set; } = string.Empty;
 	public string PlayerLogPath { get; set; } = "~/.config/unity3d/CarX Technologies/CarX Street/Player.log";
 
@@ -93,18 +99,19 @@ public sealed class BuildProfile
 	public string RemoteFolder => DevkitGames.GamesRoot + "/" + GameId;
 
 	[JsonIgnore]
-	public string StartCommand
-	{
-		get
-		{
-			string exe = Executable.Trim().Replace('\\', '/');
-			if (exe.Contains(' '))
-			{
-				exe = "\"" + exe + "\"";
-			}
+	public string StartCommand => StartCommandWith(null);
 
-			return string.IsNullOrWhiteSpace(Arguments) ? exe : exe + " " + Arguments.Trim();
+	// Команда запуска с аргументами на один запуск (например, запись профайлера) поверх аргументов профиля
+	public string StartCommandWith(string? extraArguments)
+	{
+		string exe = Executable.Trim().Replace('\\', '/');
+		if (exe.Contains(' '))
+		{
+			exe = "\"" + exe + "\"";
 		}
+
+		string arguments = string.Join(' ', new[] { Arguments, extraArguments }.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a!.Trim()));
+		return arguments.Length == 0 ? exe : exe + " " + arguments;
 	}
 
 	public IReadOnlyDictionary<string, string> ParseEnvironment()
