@@ -98,6 +98,7 @@ internal sealed partial class MainWindow
 			         Ui.Button("Залить и запустить", () => DeployAsync(launchAfter: true)),
 			         Ui.Button("Запустить", LaunchGameAsync),
 			         Ui.Button("Остановить", StopGameAsync),
+			         Ui.Button("Скриншот", TakeScreenshotAsync),
 			         m_btnCheckLayout,
 			         Ui.Button("Удалить с Deck", DeleteGameAsync)
 		         })

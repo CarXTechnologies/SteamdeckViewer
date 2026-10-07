@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using SteamdeckViewer.Core;
@@ -40,6 +42,9 @@ internal sealed partial class MainWindow
 	private bool m_streamSwitching;
 
 	private SunshineStatus? m_sunshineStatus;
+
+	// Последний скриншот в буфере обмена
+	private Bitmap? m_clipboardShot;
 
 	private Control BuildScreenTab()
 	{
@@ -106,14 +111,58 @@ internal sealed partial class MainWindow
 				Ui.Button("Скачать Moonlight", () => Launcher.LaunchUriAsync(new Uri(Moonlight.DownloadUrl))),
 				Ui.Button("Сопрячь с Deck", () => PairMoonlightAsync(quiet: false)))));
 
+		var screenshotGroup = Ui.Group("Скриншот", Ui.Column(10,
+			Ui.Row(Ui.Button("Сделать скриншот", TakeScreenshotAsync), Ui.Button("Открыть папку", () => OpenLocalFolder(ScreenshotFolder))),
+			Ui.Hint("Снимок экрана Deck сохраняется на ПК в папку «Скриншоты» рядом с папками обмена и копируется в буфер обмена — " +
+			        "его можно сразу вставить в задачу или чат. Moonlight не нужен. В Game Mode снимает gamescope: игра вместе с оверлеями " +
+			        "(MangoHud, Steam) так, как на экране; на рабочем столе — spectacle. Та же кнопка есть на вкладке «Билды».")));
+
 		UpdateMoonlightText();
 		ShowSunshineStatus(null);
 
 		return new ScrollViewer
 		{
 			Margin = new Thickness(0, 10, 0, 10),
-			Content = Ui.Column(10, streamGroup, sunshineGroup, moonlightGroup)
+			Content = Ui.Column(10, streamGroup, screenshotGroup, sunshineGroup, moonlightGroup)
 		};
+	}
+
+	// ---------------------------------------------------------------- скриншот
+
+	private string ScreenshotFolder => Path.Combine(ExchangeRoot, "Скриншоты");
+
+	private async Task TakeScreenshotAsync()
+	{
+		string folder = ScreenshotFolder;
+		string path = Path.Combine(folder, DeckScreenshot.FileName(DateTime.Now));
+		if (!await RunOnDeckAsync("Скриншот Deck…", (deck, ct) =>
+		    {
+			    Directory.CreateDirectory(folder);
+			    return DeckScreenshot.TakeAsync(deck, path, ct);
+		    }))
+		{
+			return;
+		}
+
+		bool copied = false;
+		if (Clipboard != null)
+		{
+			try
+			{
+				// Windows может забрать картинку из буфера позже, при вставке, поэтому Bitmap живёт до следующего снимка
+				var bitmap = new Bitmap(path);
+				await Clipboard.SetBitmapAsync(bitmap);
+				m_clipboardShot?.Dispose();
+				m_clipboardShot = bitmap;
+				copied = true;
+			}
+			catch (Exception e)
+			{
+				ErrorLog.Write(e);
+			}
+		}
+
+		SetStatus($"Скриншот сохранён{(copied ? " и скопирован в буфер обмена" : string.Empty)}: {path}");
 	}
 
 	private void SaveStreamOptions()
