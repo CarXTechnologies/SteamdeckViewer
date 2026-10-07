@@ -14,7 +14,7 @@ internal static class Dialogs
 		return ShowMessageAsync(owner, message, "Ошибка", yesNo: false);
 	}
 
-	public static Task Info(Window owner, string message, string caption = "CarX Deck Tools")
+	public static Task Info(Window owner, string message, string caption = AppInfo.Name)
 	{
 		return ShowMessageAsync(owner, message, caption, yesNo: false);
 	}

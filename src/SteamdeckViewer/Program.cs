@@ -64,7 +64,7 @@ namespace SteamdeckViewer
 		{
 			if (OperatingSystem.IsWindows())
 			{
-				MessageBoxW(IntPtr.Zero, text, "CarX Deck Tools", 0x10); // MB_ICONERROR
+				MessageBoxW(IntPtr.Zero, text, AppInfo.Name, 0x10); // MB_ICONERROR
 			}
 		}
 

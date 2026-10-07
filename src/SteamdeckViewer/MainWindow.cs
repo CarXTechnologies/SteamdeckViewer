@@ -33,7 +33,7 @@ internal sealed partial class MainWindow : Window
 
 	public MainWindow(ExternalCommand? startupCommand = null)
 	{
-		Title = "CarX Deck Tools";
+		Title = AppInfo.Title;
 		Icon = LoadAppIcon();
 		MinWidth = 1100;
 		MinHeight = 700;
