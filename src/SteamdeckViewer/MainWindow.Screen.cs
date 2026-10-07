@@ -46,14 +46,13 @@ internal sealed partial class MainWindow
 	// Последний скриншот в буфере обмена
 	private Bitmap? m_clipboardShot;
 
+	private readonly CheckBox m_cbStopSunshineOnExit = new() { Content = "Останавливать Sunshine на Deck при выходе из программы" };
+	private Task? m_exitSunshineStop;
+
 	private Control BuildScreenTab()
 	{
 		m_streamWatch.Tick += async (_, _) => await WatchStreamAsync();
-		Closed += (_, _) =>
-		{
-			m_streamWatch.Stop();
-			m_stream?.Dispose();
-		};
+		Closing += EndStreamOnExit;
 
 		m_cbResolution.SelectedIndex = Math.Clamp(m_settings.StreamResolution, 0, Resolutions.Length - 1);
 		m_cbFps.SelectedIndex = Math.Max(0, Array.IndexOf(FpsOptions, m_settings.StreamFps));
@@ -61,6 +60,12 @@ internal sealed partial class MainWindow
 		m_cbFullscreen.IsChecked = m_settings.StreamFullscreen;
 		m_cbOverlay.IsChecked = m_settings.StreamPerformanceOverlay;
 		m_cbForceComposite.IsChecked = m_settings.ForceGamescopeComposite;
+		m_cbStopSunshineOnExit.IsChecked = m_settings.StopSunshineOnExit;
+		m_cbStopSunshineOnExit.IsCheckedChanged += (_, _) =>
+		{
+			m_settings.StopSunshineOnExit = m_cbStopSunshineOnExit.IsChecked == true;
+			ScheduleSave();
+		};
 
 		m_cbResolution.SelectionChanged += (_, _) => SaveStreamOptions();
 		m_cbFps.SelectionChanged += (_, _) => SaveStreamOptions();
@@ -87,7 +92,8 @@ internal sealed partial class MainWindow
 			Ui.Hint("Мышь и клавиатура ПК управляют Deck напрямую, геймпад, подключённый к ПК, работает как геймпад Deck. " +
 			        "На рабочем столе курсор ПК совпадает с курсором Deck. В Game Mode мышь работает как в играх: щёлкните в окно стрима, " +
 			        "чтобы захватить её, Ctrl+Alt+Shift+Z — отпустить (абсолютную мышь gamescope пока не понимает). " +
-			        "Ctrl+Alt+Shift+X — окно или полный экран, Ctrl+Alt+Shift+Q — завершить стрим. При включённом VPN добавьте Moonlight.exe в исключения раздельного туннелирования.")));
+			        "Ctrl+Alt+Shift+X — окно или полный экран, Ctrl+Alt+Shift+Q — завершить стрим. При включённом VPN добавьте Moonlight.exe в исключения раздельного туннелирования. " +
+			        "При выходе из программы окно стрима закрывается.")));
 
 		var sunshineGroup = Ui.Group("Sunshine на Deck", Ui.Column(10,
 			m_sunshineText,
@@ -98,6 +104,7 @@ internal sealed partial class MainWindow
 				Ui.Button("Остановить", StopSunshineAsync),
 				Ui.Button("Удалить…", UninstallSunshineAsync),
 				Ui.Button("Веб-интерфейс", OpenSunshineWebUiAsync)),
+			m_cbStopSunshineOnExit,
 			Ui.Hint("Game Mode снимается только KMS-захватом, а он требует прав root. Поэтому для него Sunshine запускается так же, как в плагине " +
 			        "decky-sunshine: flatpak от root, служба sdv-sunshine и правило polkit, чтобы запускать и останавливать её без пароля. " +
 			        "Рабочий стол KMS-захват отдаёт повёрнутым, поэтому там Sunshine работает пользовательской службой и снимает экран через KDE. " +
@@ -604,6 +611,47 @@ internal sealed partial class MainWindow
 		{
 			m_streamSwitching = false;
 		}
+	}
+
+	// Выход из программы заканчивает трансляцию: окно Moonlight, открытое программой, закрывается, а Sunshine на Deck
+	// по галке останавливается. Закрытие окна ждёт остановку не дольше 5 с, чтобы без сети программа не висела
+	private async void EndStreamOnExit(object? sender, WindowClosingEventArgs e)
+	{
+		if (m_exitSunshineStop != null)
+		{
+			// Повторное закрытие, пока Sunshine останавливается, ждёт остановку
+			e.Cancel = !m_exitSunshineStop.IsCompleted;
+			return;
+		}
+
+		m_streamWatch.Stop();
+		bool streamed = m_stream != null;
+		CloseStream();
+
+		// При выключении Windows не задерживаем систему ради Deck
+		if (!m_settings.StopSunshineOnExit || e.CloseReason == WindowCloseReason.OSShutdown || m_deck is not { } deck ||
+		    !streamed && m_sunshineStatus is not { AnyRunning: true })
+		{
+			return;
+		}
+
+		e.Cancel = true;
+		IsEnabled = false;
+		SetStatus("Остановка Sunshine на Deck…");
+		m_exitSunshineStop = Task.Run(async () =>
+		{
+			try
+			{
+				using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+				await SunshineHost.StopAsync(deck, timeout.Token);
+			}
+			catch (Exception ex)
+			{
+				ErrorLog.Write(ex);
+			}
+		});
+		await m_exitSunshineStop;
+		Close();
 	}
 
 	private void CloseStream()

@@ -49,6 +49,9 @@ public sealed class AppSettings
 	public bool StreamPerformanceOverlay { get; set; }
 	public bool ForceGamescopeComposite { get; set; } = true;
 
+	// Выход из программы заканчивает трансляцию и на стороне Deck
+	public bool StopSunshineOnExit { get; set; } = true;
+
 	// Папки обмена; пустой путь — «Steam Deck» на рабочем столе ПК
 	public bool ExchangeEnabled { get; set; } = true;
 	public string? ExchangeFolder { get; set; }
