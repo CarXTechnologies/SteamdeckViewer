@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
 using SteamdeckViewer.Core;
@@ -11,6 +12,8 @@ namespace SteamdeckViewer
 		public override void Initialize()
 		{
 			Styles.Add(new FluentTheme());
+			// Стили редактора AvaloniaEdit (окно Player.log)
+			Styles.Add(new StyleInclude(new Uri("avares://CarXDeckTools/")) { Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml") });
 			RequestedThemeVariant = AppSettings.Current.ColorMode.ToThemeVariant();
 		}
 

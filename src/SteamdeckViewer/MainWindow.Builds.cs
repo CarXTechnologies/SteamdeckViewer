@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -45,7 +46,7 @@ internal sealed partial class MainWindow
 	private readonly Button m_btnCheckLayout = new() { Content = "Проверить целостность", VerticalAlignment = VerticalAlignment.Center, IsVisible = false };
 	private readonly List<Button> m_buildButtons = [];
 
-	private readonly LogView m_playerLog = new();
+	private readonly PlayerLogView m_playerLog = new();
 	private readonly Button m_btnTail = new() { MinWidth = 170 };
 	private readonly DispatcherTimer m_saveTimer = new() { Interval = TimeSpan.FromMilliseconds(600) };
 
@@ -139,7 +140,7 @@ internal sealed partial class MainWindow
 		var logPanel = new DockPanel();
 		DockPanel.SetDock(logToolbar, Dock.Top);
 		logPanel.Children.Add(logToolbar);
-		logPanel.Children.Add(m_playerLog.Box);
+		logPanel.Children.Add(m_playerLog.View);
 
 		var root = new Grid { ColumnDefinitions = new ColumnDefinitions("700,6,*"), Margin = new Thickness(0, 10, 0, 10) };
 		root.ColumnDefinitions[0].MinWidth = 480;
@@ -153,6 +154,16 @@ internal sealed partial class MainWindow
 		Border logGroup = Ui.Group("Player.log", logPanel);
 		Grid.SetColumn(logGroup, 2);
 		root.Children.Add(logGroup);
+
+		// Ctrl+F из любого места вкладки — в поиск по логу
+		root.KeyDown += (_, e) =>
+		{
+			if (e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control)
+			{
+				m_playerLog.FocusSearch();
+				e.Handled = true;
+			}
+		};
 
 		SetupProfileBinding();
 		ReloadProfiles();
