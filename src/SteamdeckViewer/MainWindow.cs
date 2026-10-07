@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Renci.SshNet.Common;
 using SteamdeckViewer.Core;
 
@@ -28,8 +29,9 @@ internal sealed partial class MainWindow : Window
 	private readonly ProgressBar m_statusBusy = new() { IsIndeterminate = true, Width = 120, IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
 
 	private readonly TabControl m_tabs = new() { Margin = new Thickness(10, 0, 10, 0) };
+	private readonly TabItem m_buildsTab = new() { Header = "Билды" };
 
-	public MainWindow()
+	public MainWindow(ExternalCommand? startupCommand = null)
 	{
 		Title = "CarX Deck Tools";
 		Icon = LoadAppIcon();
@@ -46,11 +48,22 @@ internal sealed partial class MainWindow : Window
 		m_btnConnect.Click += async (_, _) => await ToggleConnectionAsync();
 		UpdateConnectionState();
 
+		m_pendingCommand = startupCommand;
+		_ = ExternalCommand.ListenAsync(ExternalCommand.PipeName,
+			command => Dispatcher.UIThread.Post(async () => await OnExternalCommandAsync(command)), m_lifetime.Token);
+
 		Opened += async (_, _) =>
 		{
 			if (m_settings.AutoConnect && SelectedDevice != null && DeckKeys.AvailablePrivateKeys().Count > 0)
 			{
 				await ConnectAsync(quiet: true);
+			}
+
+			m_ready = true;
+			if (m_pendingCommand is { } command)
+			{
+				m_pendingCommand = null;
+				await RunExternalCommandAsync(command);
 			}
 		};
 
@@ -87,7 +100,8 @@ internal sealed partial class MainWindow : Window
 		m_tabs.Items.Add(new TabItem { Header = "Устройство", Content = BuildDeviceTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Экран", Content = BuildScreenTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Файлы", Content = BuildFilesTab() });
-		m_tabs.Items.Add(new TabItem { Header = "Билды", Content = BuildBuildsTab() });
+		m_buildsTab.Content = BuildBuildsTab();
+		m_tabs.Items.Add(m_buildsTab);
 		m_tabs.Items.Add(new TabItem { Header = "Отладка (Rider)", Content = BuildDebugTab() });
 		m_tabs.Items.Add(new TabItem { Header = "Консоль", Content = BuildConsoleTab() });
 

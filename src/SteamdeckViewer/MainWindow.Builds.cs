@@ -51,6 +51,10 @@ internal sealed partial class MainWindow
 	private CancellationTokenSource? m_tailCts;
 	private bool m_loadingProfile;
 
+	// Команда из Unity, пришедшая до открытия окна и автоподключения
+	private ExternalCommand? m_pendingCommand;
+	private bool m_ready;
+
 	private BuildProfile CurrentProfile => m_cbProfiles.SelectedItem as BuildProfile ?? m_settings.Profiles[0];
 
 	private Control BuildBuildsTab()
@@ -477,6 +481,57 @@ internal sealed partial class MainWindow
 		m_buildProgressText.Text = p.TotalFiles > 0
 			? $"{p.Stage}: {p.DoneFiles}/{p.TotalFiles} файлов · {DeckStatus.FormatBytes(p.DoneBytes)} из {DeckStatus.FormatBytes(p.TotalBytes)}"
 			: p.Stage + "…";
+	}
+
+	// ---------------------------------------------------------------- команды из Unity
+
+	// Пока окно не открылось и не прошло автоподключение, команда ждёт; из двух ожидающих остаётся последняя
+	private async Task OnExternalCommandAsync(ExternalCommand command)
+	{
+		if (!m_ready)
+		{
+			m_pendingCommand = command;
+			return;
+		}
+
+		await RunExternalCommandAsync(command);
+	}
+
+	private async Task RunExternalCommandAsync(ExternalCommand command)
+	{
+		if (WindowState == WindowState.Minimized)
+		{
+			WindowState = WindowState.Normal;
+		}
+
+		Activate();
+		m_tabs.SelectedItem = m_buildsTab;
+
+		if (m_deployCts != null)
+		{
+			await Dialogs.Info(this, "Заливка уже идёт. Дождитесь её окончания или отмените и повторите из Unity.");
+			return;
+		}
+
+		BuildProfile? profile = command.FindProfile(m_settings.Profiles);
+		if (profile == null)
+		{
+			await Dialogs.Error(this, $"Нет профиля с папкой сборки\n{command.Folder}\n\n" +
+			                          "Укажите эту папку в профиле на вкладке «Билды» и повторите из Unity.");
+			return;
+		}
+
+		m_cbProfiles.SelectedItem = profile;
+		if (m_deck == null)
+		{
+			await ConnectAsync(quiet: false);
+			if (m_deck == null)
+			{
+				return;
+			}
+		}
+
+		await DeployAsync(command.Run);
 	}
 
 	// ---------------------------------------------------------------- Player.log

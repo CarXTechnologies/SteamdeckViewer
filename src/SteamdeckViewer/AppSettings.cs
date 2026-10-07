@@ -53,6 +53,20 @@ public sealed class AppSettings
 	public bool ExchangeEnabled { get; set; } = true;
 	public string? ExchangeFolder { get; set; }
 
+	// Путь к exe для меню Build/Steam Deck в Unity: так редактор находит программу без настройки
+	public static void RememberExecutablePath()
+	{
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
+			File.WriteAllText(Path.Combine(Path.GetDirectoryName(SettingsPath)!, "app-path.txt"), Environment.ProcessPath);
+		}
+		catch
+		{
+			// ignore
+		}
+	}
+
 	// Через временный файл: оборванная запись не оставит полупустой settings.json
 	public void Save()
 	{

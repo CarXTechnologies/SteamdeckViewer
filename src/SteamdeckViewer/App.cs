@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
+using SteamdeckViewer.Core;
 
 namespace SteamdeckViewer
 {
@@ -17,7 +18,7 @@ namespace SteamdeckViewer
 		{
 			if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
 			{
-				var window = new MainWindow();
+				var window = new MainWindow(ExternalCommand.Parse(desktop.Args ?? []));
 				desktop.MainWindow = window;
 
 				// Ошибка в обработчике кнопки не должна ронять приложение (например, посреди заливки):
