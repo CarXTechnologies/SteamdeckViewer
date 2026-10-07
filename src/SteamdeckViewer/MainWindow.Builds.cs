@@ -248,6 +248,9 @@ internal sealed partial class MainWindow
 		m_cbCheckLayout.IsChecked = profile.CheckPlayerLayout;
 		m_cbRecordProfiler.IsChecked = profile.RecordProfiler;
 		m_tbProfilerFrames.Text = profile.ProfilerFrameCount > 0 ? profile.ProfilerFrameCount.ToString() : string.Empty;
+		m_cbMangoHudOverlay.IsChecked = profile.MangoHudOverlay;
+		m_cbMangoHudLog.IsChecked = profile.MangoHudLog;
+		m_tbMangoHudSeconds.Text = profile.MangoHudLogSeconds > 0 ? profile.MangoHudLogSeconds.ToString() : string.Empty;
 		m_btnCheckLayout.IsVisible = profile.CheckPlayerLayout;
 		m_loadingProfile = false;
 		UpdateGameIdHint(profile);
@@ -380,7 +383,7 @@ internal sealed partial class MainWindow
 		SyncSummary? summary = null;
 		string? shortcutProblem = null;
 		PlayerLayoutReport? layout = null;
-		string? profilerFile = null;
+		IReadOnlyList<string> launchNotes = [];
 		var progress = new Progress<SyncProgress>(ShowBuildProgress);
 		bool ok = await RunOnDeckAsync("Заливка билда…", async (deck, _) =>
 		{
@@ -415,7 +418,7 @@ internal sealed partial class MainWindow
 			// С расхождениями игра всё равно остановится на E29: решение о запуске — за пользователем, после окна с отчётом
 			if (launchAfter && layout is not { Problems.Count: > 0 })
 			{
-				profilerFile = await LaunchOnDeckAsync(deck, profile, cts.Token);
+				launchNotes = await LaunchOnDeckAsync(deck, profile, cts.Token);
 			}
 		}, cts.Token);
 
@@ -465,7 +468,7 @@ internal sealed partial class MainWindow
 			SetStatus(launchAfter ? "Билд залит и запущен" : "Билд залит");
 			if (launchAfter)
 			{
-				LogProfilerRecording(profilerFile);
+				LogLaunchNotes(launchNotes);
 				StartLogTail();
 			}
 		}
@@ -548,34 +551,46 @@ internal sealed partial class MainWindow
 	private async Task LaunchGameAsync()
 	{
 		BuildProfile profile = CurrentProfile;
-		string? profilerFile = null;
-		if (await RunOnDeckAsync("Запуск…", async (deck, ct) => profilerFile = await LaunchOnDeckAsync(deck, profile, ct)))
+		IReadOnlyList<string> launchNotes = [];
+		if (await RunOnDeckAsync("Запуск…", async (deck, ct) => launchNotes = await LaunchOnDeckAsync(deck, profile, ct)))
 		{
 			SetStatus($"Запущено: {profile.Name}");
-			LogProfilerRecording(profilerFile);
+			LogLaunchNotes(launchNotes);
 			StartLogTail();
 		}
 	}
 
 	// С включённой в профиле записью профайлера игра получает аргументы записи; возвращает путь будущего .raw
-	private static async Task<string?> LaunchOnDeckAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
+	private static async Task<IReadOnlyList<string>> LaunchOnDeckAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
 	{
+		var notes = new List<string>();
 		string? arguments = null;
-		string? file = null;
 		if (profile.RecordProfiler)
 		{
-			(arguments, file) = await ProfilerCapture.PrepareAsync(deck, profile, DateTime.Now, ct);
+			(arguments, string file) = await ProfilerCapture.PrepareAsync(deck, profile, DateTime.Now, ct);
+			notes.Add($"запись профайлера: {file} (вкладка «Отладка» → «Скачать последнюю запись»)");
 		}
 
-		await DevkitGames.LaunchAsync(deck, profile, arguments, ct);
-		return file;
+		IReadOnlyDictionary<string, string>? environment = await MangoHudCapture.PrepareAsync(deck, profile, ct);
+		if (profile.MangoHudOverlay)
+		{
+			notes.Add("MangoHud: оверлей включён");
+		}
+
+		if (profile.MangoHudLog)
+		{
+			notes.Add($"MangoHud: замеры пишутся в {MangoHudCapture.Folder(profile)} (вкладка «Отладка» → «Скачать последний замер»)");
+		}
+
+		await DevkitGames.LaunchAsync(deck, profile, new LaunchExtras(arguments, environment), ct);
+		return notes;
 	}
 
-	private void LogProfilerRecording(string? file)
+	private void LogLaunchNotes(IReadOnlyList<string> notes)
 	{
-		if (file != null)
+		foreach (string note in notes)
 		{
-			m_playerLog.Append($"[CarX Deck Tools] запись профайлера: {file} (вкладка «Отладка» → «Скачать последнюю запись»)");
+			m_playerLog.Append("[CarX Deck Tools] " + note);
 		}
 	}
 

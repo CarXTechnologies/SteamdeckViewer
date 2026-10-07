@@ -7,7 +7,7 @@ using SteamdeckViewer.Core;
 namespace SteamdeckViewer;
 
 // Вкладка «Отладка»: адрес и порт отладчика Unity-плеера на Deck, ретрансляция анонса для Rider и Unity Editor,
-// запись Unity Profiler в файл на Deck
+// запись Unity Profiler в файл на Deck, оверлей и замеры MangoHud
 internal sealed partial class MainWindow
 {
 	private readonly UnityAnnounceRelay m_relay = new();
@@ -15,6 +15,9 @@ internal sealed partial class MainWindow
 	private readonly CheckBox m_cbRelay = new() { Content = "Показывать плеер в Rider и Unity Editor автоматически (повторять анонс плеера в сети ПК)" };
 	private readonly CheckBox m_cbRecordProfiler = new() { Content = "Записывать профиль в файл на Deck при каждом запуске игры" };
 	private readonly TextBox m_tbProfilerFrames = new() { Width = 140, PlaceholderText = "до закрытия игры" };
+	private readonly CheckBox m_cbMangoHudOverlay = new() { Content = "Показывать оверлей MangoHud в игре" };
+	private readonly CheckBox m_cbMangoHudLog = new() { Content = "Записывать замеры в CSV" };
+	private readonly TextBox m_tbMangoHudSeconds = new() { Width = 140, PlaceholderText = "до закрытия игры" };
 	private volatile UnityPlayerInfo? m_playerInfo;
 
 	private Control BuildDebugTab()
@@ -22,6 +25,9 @@ internal sealed partial class MainWindow
 		m_cbRelay.IsCheckedChanged += (_, _) => UpdateDebugView();
 		m_cbRecordProfiler.IsCheckedChanged += (_, _) => UpdateProfile(p => p.RecordProfiler = m_cbRecordProfiler.IsChecked == true);
 		BindText(m_tbProfilerFrames, (p, v) => p.ProfilerFrameCount = int.TryParse(v.Trim(), out int frames) && frames > 0 ? frames : 0);
+		m_cbMangoHudOverlay.IsCheckedChanged += (_, _) => UpdateProfile(p => p.MangoHudOverlay = m_cbMangoHudOverlay.IsChecked == true);
+		m_cbMangoHudLog.IsCheckedChanged += (_, _) => UpdateProfile(p => p.MangoHudLog = m_cbMangoHudLog.IsChecked == true);
+		BindText(m_tbMangoHudSeconds, (p, v) => p.MangoHudLogSeconds = int.TryParse(v.Trim(), out int seconds) && seconds > 0 ? seconds : 0);
 
 		var playerGroup = Ui.Group("Unity-плеер на Deck", Ui.Column(10,
 			m_playerText,
@@ -53,6 +59,18 @@ internal sealed partial class MainWindow
 			        "(и из Unity). Без лимита кадров файл растёт, пока игра запущена, — закройте её перед скачиванием. " +
 			        "Открыть запись: Unity → Profiler → Load.")));
 
+		var mangoHudGroup = Ui.Group("Производительность Deck (MangoHud)", Ui.Column(10,
+			m_cbMangoHudOverlay,
+			m_cbMangoHudLog,
+			Ui.Row(new TextBlock { Text = "Записать секунд:", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center }, m_tbMangoHudSeconds),
+			Ui.Row(
+				Ui.Button("Скачать последний замер…", DownloadMangoHudLogAsync),
+				Ui.Button("Удалить замеры на Deck", DeleteMangoHudLogsAsync)),
+			Ui.Hint("MangoHud входит в SteamOS. Оверлей показывает FPS, время кадра с графиком, загрузку, температуры и мощность CPU/GPU, " +
+			        "память и батарею; запись пишет то же в CSV на каждый кадр. Включается при следующем запуске кнопками программы " +
+			        "(и из Unity), Development-сборка не нужна. После скачивания программа покажет итоги: средний FPS, 1% и 0,1% low, " +
+			        "время кадра, загрузку, температуры. Profiler показывает, что происходит внутри игры, а MangoHud — как ведёт себя железо.")));
+
 		var prepareGroup = Ui.Group("Подготовка билда", new SelectableTextBlock
 		{
 			TextWrapping = TextWrapping.Wrap,
@@ -80,7 +98,7 @@ internal sealed partial class MainWindow
 		return new ScrollViewer
 		{
 			Margin = new Thickness(0, 10, 0, 10),
-			Content = Ui.Column(10, playerGroup, profilerGroup, prepareGroup, riderGroup)
+			Content = Ui.Column(10, playerGroup, profilerGroup, mangoHudGroup, prepareGroup, riderGroup)
 		};
 	}
 
@@ -133,6 +151,71 @@ internal sealed partial class MainWindow
 		    }))
 		{
 			SetStatus($"Запись сохранена: {localPath} — откройте её в Unity: Profiler → Load");
+		}
+	}
+
+	private async Task DownloadMangoHudLogAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		MangoHudLog? latest = null;
+		if (!await RunOnDeckAsync("Поиск замеров MangoHud…", async (deck, ct) => latest = await MangoHudCapture.FindLatestAsync(deck, profile, ct)))
+		{
+			return;
+		}
+
+		if (latest == null)
+		{
+			await Dialogs.Info(this, $"На Deck нет замеров MangoHud для «{profile.Name}». " +
+			                         "Включите запись замеров и запустите игру кнопкой программы.", "MangoHud");
+			return;
+		}
+
+		IStorageFile? file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+		{
+			Title = "Сохранить замер MangoHud",
+			SuggestedFileName = latest.Name,
+			DefaultExtension = "csv"
+		});
+		string? localPath = file?.TryGetLocalPath();
+		if (localPath == null)
+		{
+			return;
+		}
+
+		if (!await RunOnDeckAsync($"Скачивание {latest.Name} ({DeckStatus.FormatBytes(latest.Size)})…", (deck, _) =>
+		    {
+			    using FileStream output = File.Create(localPath);
+			    deck.GetSftp().DownloadFile(latest.RemotePath, output);
+			    return Task.CompletedTask;
+		    }))
+		{
+			return;
+		}
+
+		SetStatus("Замер сохранён: " + localPath);
+		MangoHudSummary? summary = MangoHudCapture.Summarize(await File.ReadAllTextAsync(localPath));
+		if (summary == null)
+		{
+			await Dialogs.Info(this, "Замер сохранён, но в нём нет ни одного кадра: игра закрылась сразу или запись ещё не началась.", "MangoHud");
+			return;
+		}
+
+		string text = summary.Describe();
+		m_playerLog.Append("[CarX Deck Tools] MangoHud, " + latest.Name + ":\n" + text);
+		await Dialogs.Info(this, text + "\n\nФайл: " + localPath, "MangoHud");
+	}
+
+	private async Task DeleteMangoHudLogsAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		if (!await Dialogs.YesNo(this, $"Удалить на Deck все замеры MangoHud для «{profile.Name}» ({MangoHudCapture.Folder(profile)})?", "MangoHud"))
+		{
+			return;
+		}
+
+		if (await RunOnDeckAsync("Удаление замеров MangoHud…", (deck, ct) => MangoHudCapture.DeleteAllAsync(deck, profile, ct)))
+		{
+			SetStatus("Замеры MangoHud на Deck удалены");
 		}
 	}
 
