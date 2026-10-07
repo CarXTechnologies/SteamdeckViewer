@@ -37,10 +37,12 @@ internal sealed partial class MainWindow
 	private readonly TextBox m_tbPlayerLog = new();
 	private readonly CheckBox m_cbDeleteExtraneous = new() { Content = "Удалять на Deck файлы, которых нет в билде (нужно для проверки целостности CarX Street)" };
 	private readonly CheckBox m_cbStopBeforeUpload = new() { Content = "Останавливать игру перед заливкой" };
+	private readonly CheckBox m_cbCheckLayout = new() { Content = "Проверять целостность по player_layout.bundle после заливки (только для проекта Street PC)" };
 
 	private readonly ProgressBar m_buildProgress = new() { Minimum = 0, Maximum = 1, Height = 6, IsVisible = false };
 	private readonly TextBlock m_buildProgressText = new() { Opacity = 0.75, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
 	private readonly Button m_btnCancelDeploy = new() { Content = "Отмена", IsEnabled = false };
+	private readonly Button m_btnCheckLayout = new() { Content = "Проверить целостность", VerticalAlignment = VerticalAlignment.Center, IsVisible = false };
 	private readonly List<Button> m_buildButtons = [];
 
 	private readonly LogView m_playerLog = new();
@@ -86,6 +88,7 @@ internal sealed partial class MainWindow
 		form.Add("Player.log на Deck", m_tbPlayerLog);
 		form.AddFull(m_cbDeleteExtraneous);
 		form.AddFull(m_cbStopBeforeUpload);
+		form.AddFull(m_cbCheckLayout);
 
 		var actions = new WrapPanel { Orientation = Orientation.Horizontal };
 		foreach (Button button in new[]
@@ -94,6 +97,7 @@ internal sealed partial class MainWindow
 			         Ui.Button("Залить и запустить", () => DeployAsync(launchAfter: true)),
 			         Ui.Button("Запустить", LaunchGameAsync),
 			         Ui.Button("Остановить", StopGameAsync),
+			         m_btnCheckLayout,
 			         Ui.Button("Удалить с Deck", DeleteGameAsync)
 		         })
 		{
@@ -104,6 +108,7 @@ internal sealed partial class MainWindow
 
 		m_btnCancelDeploy.Margin = new Thickness(0, 0, 8, 8);
 		m_btnCancelDeploy.Click += (_, _) => m_deployCts?.Cancel();
+		m_btnCheckLayout.Click += async (_, _) => await CheckLayoutAsync();
 		actions.Children.Add(m_btnCancelDeploy);
 
 		var left = Ui.Column(0,
@@ -183,6 +188,11 @@ internal sealed partial class MainWindow
 		m_cbLaunchMode.SelectionChanged += (_, _) => UpdateProfile(p => p.LaunchMode = (LaunchMode)Math.Max(0, m_cbLaunchMode.SelectedIndex));
 		m_cbDeleteExtraneous.IsCheckedChanged += (_, _) => UpdateProfile(p => p.DeleteExtraneous = m_cbDeleteExtraneous.IsChecked == true);
 		m_cbStopBeforeUpload.IsCheckedChanged += (_, _) => UpdateProfile(p => p.StopBeforeUpload = m_cbStopBeforeUpload.IsChecked == true);
+		m_cbCheckLayout.IsCheckedChanged += (_, _) =>
+		{
+			UpdateProfile(p => p.CheckPlayerLayout = m_cbCheckLayout.IsChecked == true);
+			m_btnCheckLayout.IsVisible = m_cbCheckLayout.IsChecked == true;
+		};
 	}
 
 	private void BindText(TextBox box, Action<BuildProfile, string> apply)
@@ -235,6 +245,8 @@ internal sealed partial class MainWindow
 		m_tbPlayerLog.Text = profile.PlayerLogPath;
 		m_cbDeleteExtraneous.IsChecked = profile.DeleteExtraneous;
 		m_cbStopBeforeUpload.IsChecked = profile.StopBeforeUpload;
+		m_cbCheckLayout.IsChecked = profile.CheckPlayerLayout;
+		m_btnCheckLayout.IsVisible = profile.CheckPlayerLayout;
 		m_loadingProfile = false;
 		UpdateGameIdHint(profile);
 	}
@@ -365,6 +377,7 @@ internal sealed partial class MainWindow
 
 		SyncSummary? summary = null;
 		string? shortcutProblem = null;
+		PlayerLayoutReport? layout = null;
 		var progress = new Progress<SyncProgress>(ShowBuildProgress);
 		bool ok = await RunOnDeckAsync("Заливка билда…", async (deck, _) =>
 		{
@@ -376,6 +389,10 @@ internal sealed partial class MainWindow
 			await DevkitGames.MigrateLegacyFolderAsync(deck, profile, cts.Token);
 			summary = await FolderSync.SyncAsync(deck, profile.LocalFolder, profile.RemoteFolder,
 				new FileFilter(profile.Excludes), profile.DeleteExtraneous, progress, cts.Token);
+			if (profile.CheckPlayerLayout)
+			{
+				layout = await CheckLayoutOnDeckAsync(deck, profile, progress, cts.Token);
+			}
 
 			await DevkitGames.WriteSteamAppIdAsync(deck, profile, cts.Token);
 			if (profile.LaunchMode == LaunchMode.Steam)
@@ -392,7 +409,8 @@ internal sealed partial class MainWindow
 				}
 			}
 
-			if (launchAfter)
+			// С расхождениями игра всё равно остановится на E29: решение о запуске — за пользователем, после окна с отчётом
+			if (launchAfter && layout is not { Problems.Count: > 0 })
 			{
 				await DevkitGames.LaunchAsync(deck, profile, cts.Token);
 			}
@@ -419,6 +437,26 @@ internal sealed partial class MainWindow
 			m_playerLog.Append("[CarX Deck Tools] " + text);
 		}
 
+		if (layout is { Problems.Count: > 0 })
+		{
+			SetStatus("Билд залит, но не пройдёт проверку целостности");
+			if (await ShowLayoutProblemsAsync(layout, offerLaunch: ok && launchAfter))
+			{
+				await LaunchGameAsync();
+			}
+
+			return;
+		}
+
+		if (layout != null)
+		{
+			m_playerLog.Append($"[CarX Deck Tools] проверка целостности пройдена: {layout.Checked} бинарников совпадают с {PlayerLayout.IndexName}");
+		}
+		else if (ok && profile.CheckPlayerLayout)
+		{
+			m_playerLog.Append($"[CarX Deck Tools] проверка целостности пропущена: в сборке на ПК нет {PlayerLayout.IndexName}");
+		}
+
 		if (ok)
 		{
 			SetStatus(launchAfter ? "Билд залит и запущен" : "Билд залит");
@@ -427,6 +465,80 @@ internal sealed partial class MainWindow
 				StartLogTail();
 			}
 		}
+	}
+
+	// null — в сборке нет player_layout.bundle (не CarX Street), сверять не с чем
+	private static async Task<PlayerLayoutReport?> CheckLayoutOnDeckAsync(DeckConnection deck, BuildProfile profile,
+		IProgress<SyncProgress>? progress, CancellationToken ct)
+	{
+		PlayerLayout? layout;
+		try
+		{
+			layout = PlayerLayout.Load(profile.LocalFolder);
+		}
+		catch (InvalidDataException e)
+		{
+			return new PlayerLayoutReport(0, [e.Message]);
+		}
+		catch (IOException)
+		{
+			// Индекс занят (Unity ещё пишет сборку) — пропускаем сверку, а не срываем заливку
+			return null;
+		}
+
+		if (layout == null)
+		{
+			return null;
+		}
+
+		progress?.Report(new SyncProgress("Проверка целостности", 0, 0, 0, 0));
+		return await layout.CheckDeckAsync(deck, profile.RemoteFolder, ct);
+	}
+
+	private async Task CheckLayoutAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		PlayerLayoutReport? layout = null;
+		if (!await RunOnDeckAsync("Проверка целостности…", async (deck, ct) => layout = await CheckLayoutOnDeckAsync(deck, profile, null, ct)))
+		{
+			return;
+		}
+
+		if (layout == null)
+		{
+			await Dialogs.Info(this, $"В сборке на ПК нет {PlayerLayout.IndexName}: проверять нечего.", "Проверка целостности");
+		}
+		else if (layout.Problems.Count > 0)
+		{
+			SetStatus("Проверка целостности не пройдена");
+			await ShowLayoutProblemsAsync(layout, offerLaunch: false);
+		}
+		else
+		{
+			string text = $"Проверка целостности пройдена: {layout.Checked} бинарников совпадают с {PlayerLayout.IndexName}";
+			SetStatus(text);
+			m_playerLog.Append("[CarX Deck Tools] " + text);
+		}
+	}
+
+	// true — пользователь решил запустить игру несмотря на расхождения
+	private async Task<bool> ShowLayoutProblemsAsync(PlayerLayoutReport layout, bool offerLaunch)
+	{
+		const int shown = 15;
+		m_playerLog.Append("[CarX Deck Tools] проверка целостности не пройдена: " + string.Join("; ", layout.Problems));
+
+		string list = string.Join("\n", layout.Problems.Take(shown)) +
+		              (layout.Problems.Count > shown ? $"\n…и ещё {layout.Problems.Count - shown}" : string.Empty);
+		string text = $"Файлы на Deck не совпадают с {PlayerLayout.IndexName} сборки, игра остановится на ошибке E29 (E3239-000):\n\n{list}\n\n" +
+		              "Обычно помогает повторная заливка с включённым удалением лишних файлов или «Удалить с Deck» и заливка заново.";
+
+		if (offerLaunch)
+		{
+			return await Dialogs.YesNo(this, text + "\n\nЗапустить всё равно?", "Проверка целостности");
+		}
+
+		await Dialogs.Error(this, text);
+		return false;
 	}
 
 	private async Task LaunchGameAsync()
