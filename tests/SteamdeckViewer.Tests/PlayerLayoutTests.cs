@@ -92,6 +92,7 @@ public sealed class PlayerLayoutTests
 	[InlineData("config.so.bak", false)]
 	[InlineData("data.so.txt", false)]
 	[InlineData("steam_appid.txt", false)]
+	[InlineData("carx-deck-tools-launch.sh", false)]
 	[InlineData("CarX_Street_Data/level0", false)]
 	public void PicksFilesLikeTheGame(string path, bool mapped)
 	{

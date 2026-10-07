@@ -309,11 +309,54 @@ public sealed class DevkitGamesLinuxTests
 	public void LaunchFilesCarryOneOffArguments()
 	{
 		string extra = ProfilerCapture.Arguments("/home/deck/.local/share/carx-deck-tools/profiler/CarX_Street/a.raw", 300);
-		CommandResult result = Wsl.Run(DevkitGames.WriteLaunchFilesScript(Profile, extra) + "\necho; cat ~/devkit-game/CarX_Street-argv.json", Wsl.NewHome());
+		CommandResult result = Wsl.Run(DevkitGames.WriteLaunchFilesScript(Profile, new LaunchExtras(extra, null)) + "\necho; cat ~/devkit-game/CarX_Street-argv.json", Wsl.NewHome());
 		Assert.True(result.Success, result.Combined);
 
 		string argv = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)[0];
 		Assert.Equal(["CarX_Street.x86_64 -screen-fullscreen 1 " + extra], JsonSerializer.Deserialize<string[]>(argv)!);
+	}
+
+	// MangoHud на один запуск через Steam: env.json остаётся с переменными профиля (Steam вычищает MANGOHUD* из окружения),
+	// а переменные ставит обёртка в папке игры; Steam запускает её с теми же аргументами, она — игру
+	[WslFact]
+	public void LaunchWrapperCarriesMangoHudEnvironment()
+	{
+		var profile = new BuildProfile { Name = "CarX Street", Arguments = "-screen-fullscreen 1", MangoHudOverlay = true, MangoHudLog = true, MangoHudLogSeconds = 60 };
+		IReadOnlyDictionary<string, string> environment = MangoHudCapture.Environment(profile, "/home/deck/m")!;
+		const string fakeGame = "#!/bin/sh\necho \"MANGOHUD=$MANGOHUD\"; echo \"CONFIG=$MANGOHUD_CONFIG\"; for a in \"$@\"; do echo \"ARG=$a\"; done";
+		string script =
+			$"mkdir -p ~/devkit-game/CarX_Street && printf '%s\\n' {Sh.Quote(fakeGame)} > ~/devkit-game/CarX_Street/CarX_Street.x86_64 && chmod +x ~/devkit-game/CarX_Street/CarX_Street.x86_64\n" +
+			DevkitGames.WriteLaunchFilesScript(profile, new LaunchExtras("-profiler-enable", environment)) + "\n" +
+			"echo; cat ~/devkit-game/CarX_Street-argv.json; echo; cat ~/devkit-game/CarX_Street-env.json; echo\n" +
+			$"cd /tmp && ~/devkit-game/CarX_Street/{DevkitGames.LaunchWrapper} -screen-fullscreen 1 'two words'";
+
+		CommandResult result = Wsl.Run(script, Wsl.NewHome());
+		Assert.True(result.Success, result.Combined);
+
+		string[] lines = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+		Assert.Equal([$"{DevkitGames.LaunchWrapper} -screen-fullscreen 1 -profiler-enable"], JsonSerializer.Deserialize<string[]>(lines[0])!);
+		Assert.Equal(new Dictionary<string, string> { ["SteamDeck"] = "1" }, JsonSerializer.Deserialize<Dictionary<string, string>>(lines[1])!);
+		Assert.Equal(
+		[
+			"MANGOHUD=1",
+			"CONFIG=" + MangoHudCapture.Hud + ",output_folder=/home/deck/m,autostart_log=1,log_duration=60",
+			"ARG=-screen-fullscreen", "ARG=1", "ARG=two words"
+		], lines[2..]);
+	}
+
+	// Без переменных на один запуск обёртки нет: Steam запускает саму игру
+	[WslFact]
+	public void LaunchWithoutExtrasRemovesWrapper()
+	{
+		string script =
+			$"mkdir -p ~/devkit-game/CarX_Street && touch ~/devkit-game/CarX_Street/{DevkitGames.LaunchWrapper}\n" +
+			DevkitGames.WriteLaunchFilesScript(Profile, new LaunchExtras("-x", null)) + "\n" +
+			$"echo; cat ~/devkit-game/CarX_Street-argv.json; echo; if [ -e ~/devkit-game/CarX_Street/{DevkitGames.LaunchWrapper} ]; then echo LEFT; fi";
+
+		CommandResult result = Wsl.Run(script, Wsl.NewHome());
+
+		Assert.True(result.Success, result.Combined);
+		Assert.Equal("[\"CarX_Street.x86_64 -screen-fullscreen 1 -x\"]", result.Output.Trim());
 	}
 
 	[WslFact]
@@ -348,7 +391,7 @@ public sealed class DevkitGamesLinuxTests
 		foreach (string script in new[]
 		         {
 			         DevkitGames.DirectLaunchScript(Profile),
-			         DevkitGames.DirectLaunchScript(Profile, ProfilerCapture.Arguments("/home/deck/p/a.raw", 100)),
+			         DevkitGames.DirectLaunchScript(Profile, new LaunchExtras(ProfilerCapture.Arguments("/home/deck/p/a.raw", 100), new Dictionary<string, string> { ["MANGOHUD"] = "1", ["MANGOHUD_CONFIG"] = MangoHudCapture.Hud })),
 			         DevkitGames.StopScript(Profile),
 			         DevkitGames.WriteLaunchFilesScript(Profile),
 			         DevkitGames.SteamCommandScript("run-game/", "gameid=x", "/tmp/sdv-z"),

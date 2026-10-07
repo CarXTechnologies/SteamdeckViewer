@@ -49,6 +49,13 @@ public sealed class BuildProfile
 
 	// Сколько кадров записать; 0 — пока игра не закрыта
 	public int ProfilerFrameCount { get; set; }
+
+	// MangoHud (MangoHudCapture): оверлей с FPS, временем кадра, загрузкой и температурами поверх игры и запись замеров в CSV
+	public bool MangoHudOverlay { get; set; }
+	public bool MangoHudLog { get; set; }
+
+	// Сколько секунд писать замеры; 0 — пока игра не закрыта
+	public int MangoHudLogSeconds { get; set; }
 	public string SteamAppId { get; set; } = string.Empty;
 	public string PlayerLogPath { get; set; } = "~/.config/unity3d/CarX Technologies/CarX Street/Player.log";
 
@@ -101,10 +108,11 @@ public sealed class BuildProfile
 	[JsonIgnore]
 	public string StartCommand => StartCommandWith(null);
 
-	// Команда запуска с аргументами на один запуск (например, запись профайлера) поверх аргументов профиля
-	public string StartCommandWith(string? extraArguments)
+	// Команда запуска с аргументами на один запуск (например, запись профайлера) поверх аргументов профиля.
+	// executable — другой файл вместо игры (скрипт-обёртка), аргументы те же
+	public string StartCommandWith(string? extraArguments, string? executable = null)
 	{
-		string exe = Executable.Trim().Replace('\\', '/');
+		string exe = (executable ?? Executable).Trim().Replace('\\', '/');
 		if (exe.Contains(' '))
 		{
 			exe = "\"" + exe + "\"";
@@ -124,6 +132,18 @@ public sealed class BuildProfile
 			{
 				result[token[..eq]] = token[(eq + 1)..];
 			}
+		}
+
+		return result;
+	}
+
+	// Окружение профиля с переменными на один запуск (MangoHud) поверх него
+	public IReadOnlyDictionary<string, string> EnvironmentWith(IReadOnlyDictionary<string, string>? extra)
+	{
+		var result = new Dictionary<string, string>(ParseEnvironment(), StringComparer.Ordinal);
+		foreach ((string key, string value) in extra ?? new Dictionary<string, string>())
+		{
+			result[key] = value;
 		}
 
 		return result;

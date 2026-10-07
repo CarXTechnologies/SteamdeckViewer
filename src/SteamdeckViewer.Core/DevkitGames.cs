@@ -9,9 +9,9 @@ public static class DevkitGames
 {
 	public const string GamesRoot = "~/devkit-game";
 
-	public static async Task RegisterShortcutAsync(DeckConnection deck, BuildProfile profile, string? extraArguments, CancellationToken ct)
+	public static async Task RegisterShortcutAsync(DeckConnection deck, BuildProfile profile, LaunchExtras? extras, CancellationToken ct)
 	{
-		CommandResult written = await deck.RunAsync(WriteLaunchFilesScript(profile, extraArguments), ct);
+		CommandResult written = await deck.RunAsync(WriteLaunchFilesScript(profile, extras), ct);
 		if (!written.Success)
 		{
 			throw new InvalidOperationException("Не удалось записать настройки запуска: " + written.Combined.Trim());
@@ -56,12 +56,12 @@ public static class DevkitGames
 		await deck.RunAsync($"printf '%s\\n' {Sh.Quote(profile.SteamAppId.Trim())} > {Sh.Path(profile.RemoteFolder)}/steam_appid.txt", ct);
 	}
 
-	public static async Task LaunchAsync(DeckConnection deck, BuildProfile profile, string? extraArguments, CancellationToken ct)
+	public static async Task LaunchAsync(DeckConnection deck, BuildProfile profile, LaunchExtras? extras, CancellationToken ct)
 	{
 		if (profile.LaunchMode == LaunchMode.Steam)
 		{
-			// Аргументы могли поменяться с заливки (профиль, запись профайлера): ярлык обновляется перед каждым запуском
-			await RegisterShortcutAsync(deck, profile, extraArguments, ct);
+			// Аргументы и окружение могли поменяться с заливки (профиль, запись профайлера, MangoHud): ярлык обновляется перед каждым запуском
+			await RegisterShortcutAsync(deck, profile, extras, ct);
 			await SendSteamCommandAsync(deck, "run-game/", "gameid=" + profile.GameId, ct);
 			return;
 		}
@@ -71,7 +71,7 @@ public static class DevkitGames
 			throw new InvalidOperationException("Windows-билд под Proton запускается только через Steam.");
 		}
 
-		CommandResult result = await deck.RunAsync(DirectLaunchScript(profile, extraArguments), ct);
+		CommandResult result = await deck.RunAsync(DirectLaunchScript(profile, extras), ct);
 		if (!result.Success)
 		{
 			throw new InvalidOperationException(result.ExitCode == 2
@@ -109,7 +109,19 @@ public static class DevkitGames
 	// ---------------------------------------------------------------- скрипты для Deck
 
 	// Настройки запуска в формате devkit-utils Valve: argv — одна строка «команда + аргументы» относительно папки игры
-	internal static string WriteLaunchFilesScript(BuildProfile profile, string? extraArguments = null)
+	internal const string LaunchWrapper = "carx-deck-tools-launch.sh";
+
+	internal static string LaunchWrapperScript(BuildProfile profile, IReadOnlyDictionary<string, string> environment)
+	{
+		string exe = profile.Executable.Trim().Replace('\\', '/');
+		return
+			"#!/bin/sh\n" +
+			"# CarX Deck Tools: переменные окружения на этот запуск (Steam в Game Mode убирает MANGOHUD* из окружения игры)\n" +
+			string.Concat(environment.Select(kv => $"export {kv.Key}={Sh.Quote(kv.Value)}\n")) +
+			$"exec \"$(dirname \"$0\")\"/{Sh.Quote(exe)} \"$@\"\n";
+	}
+
+	internal static string WriteLaunchFilesScript(BuildProfile profile, LaunchExtras? extras = null)
 	{
 		string id = profile.GameId;
 		string root = Sh.Path(GamesRoot);
@@ -127,12 +139,22 @@ public static class DevkitGames
 			settings["compat_tool"] = profile.Runtime == DeckRuntime.SteamLinuxRuntime3 ? "SteamLinuxRuntime_sniper" : string.Empty;
 		}
 
-		string argv = JsonSerializer.Serialize(new[] { profile.StartCommandWith(extraArguments) });
+		// Steam в Game Mode вычищает из окружения игры часть переменных (MANGOHUD*: оверлей у него свой, mangoapp),
+		// поэтому переменные на один запуск ставит скрипт-обёртка в папке игры, а запускает Steam уже её.
+		// Под Proton обёртка не годится: там Steam ждёт .exe. Расширение .sh игра в проверке целостности (E29) не смотрит
+		string folder = Sh.Path(profile.RemoteFolder);
+		bool wrap = extras?.Environment is { Count: > 0 } && profile.Runtime != DeckRuntime.Proton;
+		string wrapper = wrap
+			? $"printf '%s' {Sh.Quote(LaunchWrapperScript(profile, extras!.Environment!))} > {folder}/{LaunchWrapper} && chmod 755 {folder}/{LaunchWrapper} && "
+			: $"rm -f {folder}/{LaunchWrapper}; ";
+
+		string argv = JsonSerializer.Serialize(new[] { profile.StartCommandWith(extras?.Arguments, wrap ? LaunchWrapper : null) });
 		string settingsJson = JsonSerializer.Serialize(settings);
-		IReadOnlyDictionary<string, string> env = profile.ParseEnvironment();
+		IReadOnlyDictionary<string, string> env = wrap ? profile.ParseEnvironment() : profile.EnvironmentWith(extras?.Environment);
 
 		return
 			$"mkdir -p {root} && " +
+			wrapper +
 			$"printf '%s' {Sh.Quote(argv)} > {root}/{Sh.Quote(id + "-argv.json")} && " +
 			$"printf '%s' {Sh.Quote(settingsJson)} > {root}/{Sh.Quote(id + "-settings.json")} && " +
 			(env.Count > 0
@@ -141,16 +163,16 @@ public static class DevkitGames
 	}
 
 	// Окружение графической сессии берём из менеджера systemd пользователя, DISPLAY — только если его там нет
-	internal static string DirectLaunchScript(BuildProfile profile, string? extraArguments = null)
+	internal static string DirectLaunchScript(BuildProfile profile, LaunchExtras? extras = null)
 	{
-		string setenv = string.Join(' ', profile.ParseEnvironment().Select(kv => "--setenv=" + Sh.Quote(kv.Key + "=" + kv.Value)));
+		string setenv = string.Join(' ', profile.EnvironmentWith(extras?.Environment).Select(kv => "--setenv=" + Sh.Quote(kv.Key + "=" + kv.Value)));
 		string unit = Sh.Quote(UnitName(profile));
 		return
 			$"cd {Sh.Path(profile.RemoteFolder)} || exit 2\n" +
 			$"systemctl --user stop {unit} 2>/dev/null; systemctl --user reset-failed {unit} 2>/dev/null\n" +
 			"display=''\n" +
 			"systemctl --user show-environment 2>/dev/null | grep -q '^DISPLAY=' || display='--setenv=DISPLAY=:0'\n" +
-			$"systemd-run --user --unit={unit} --collect --working-directory=\"$PWD\" $display {setenv} /bin/sh -c {Sh.Quote("exec " + profile.StartCommandWith(extraArguments))}";
+			$"systemd-run --user --unit={unit} --collect --working-directory=\"$PWD\" $display {setenv} /bin/sh -c {Sh.Quote("exec " + profile.StartCommandWith(extras?.Arguments))}";
 	}
 
 	// Ищет процессы, чей исполняемый файл или рабочая папка внутри папки билда; так ловятся и игры под Proton
