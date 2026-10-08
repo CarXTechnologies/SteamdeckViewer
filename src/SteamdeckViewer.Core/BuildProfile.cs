@@ -56,6 +56,13 @@ public sealed class BuildProfile
 
 	// Сколько секунд писать замеры; 0 — пока игра не закрыта
 	public int MangoHudLogSeconds { get; set; }
+
+	// Наборы аргументов и переменных на запуск (LaunchPreset); выбранный по имени применяется ко всем запускам
+	public List<LaunchPreset> Presets { get; set; } = [];
+	public string? SelectedPreset { get; set; }
+
+	[JsonIgnore]
+	public LaunchPreset? ActivePreset => Presets.FirstOrDefault(p => p.Name == SelectedPreset);
 	public string SteamAppId { get; set; } = string.Empty;
 	public string PlayerLogPath { get; set; } = "~/.config/unity3d/CarX Technologies/CarX Street/Player.log";
 
@@ -124,8 +131,14 @@ public sealed class BuildProfile
 
 	public IReadOnlyDictionary<string, string> ParseEnvironment()
 	{
+		return ParseEnvironment(EnvironmentVariables);
+	}
+
+	// «KEY=VALUE KEY2=VALUE2» через пробелы, переводы строк или «;»
+	public static IReadOnlyDictionary<string, string> ParseEnvironment(string text)
+	{
 		var result = new Dictionary<string, string>(StringComparer.Ordinal);
-		foreach (string token in EnvironmentVariables.Split([' ', '\n', '\r', '\t', ';'], StringSplitOptions.RemoveEmptyEntries))
+		foreach (string token in text.Split([' ', '\n', '\r', '\t', ';'], StringSplitOptions.RemoveEmptyEntries))
 		{
 			int eq = token.IndexOf('=');
 			if (eq > 0)
