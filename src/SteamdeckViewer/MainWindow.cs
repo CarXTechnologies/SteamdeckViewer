@@ -74,8 +74,6 @@ internal sealed partial class MainWindow : Window
 				m_pendingCommand = null;
 				await RunExternalCommandAsync(command);
 			}
-
-			StartUpdateChecks();
 		};
 
 		Closed += (_, _) =>
@@ -170,8 +168,11 @@ internal sealed partial class MainWindow : Window
 		var help = new MenuItem { Header = "Как подготовить Deck" };
 		help.Click += async (_, _) => await Dialogs.Info(this, SetupHelpText, "Подготовка Steam Deck");
 
-		var checkUpdate = new MenuItem { Header = "Проверить обновления" };
-		checkUpdate.Click += async (_, _) => await CheckForUpdateAsync(manual: true);
+		var docs = new MenuItem { Header = "Документация" };
+		docs.Click += async (_, _) => await Launcher.LaunchUriAsync(new Uri(AppInfo.DocsUrl));
+
+		var download = new MenuItem { Header = "Скачать последнюю версию" };
+		download.Click += async (_, _) => await DownloadLatestAsync();
 
 		return new Menu
 		{
@@ -179,9 +180,16 @@ internal sealed partial class MainWindow : Window
 			{
 				new MenuItem { Header = "Вид", Items = { new MenuItem { Header = "Тема", Items = { themeSystem, themeLight, themeDark } } } },
 				new MenuItem { Header = "Настройки", Items = { autoConnect, openKeys } },
-				new MenuItem { Header = "Справка", Items = { help, checkUpdate } }
+				new MenuItem { Header = "Справка", Items = { docs, help, download } }
 			}
 		};
+	}
+
+	// Архив лежит вложением на странице документации; заменить exe работающая программа сама не может
+	private async Task DownloadLatestAsync()
+	{
+		await Launcher.LaunchUriAsync(new Uri(AppInfo.DownloadUrl));
+		SetStatus("Скачивается CarXDeckTools.zip. Чтобы обновиться, закройте программу и положите exe из архива вместо " + Environment.ProcessPath);
 	}
 
 	private Control BuildDeviceBar()
