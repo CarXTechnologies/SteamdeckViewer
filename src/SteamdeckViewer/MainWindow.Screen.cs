@@ -433,6 +433,12 @@ internal sealed partial class MainWindow
 		string pin = Moonlight.NewPin();
 		bool paired = false;
 
+		// Для сообщения о неудаче: на каком шаге остановилось сопряжение
+		bool requestSeen = false;
+		bool pinAccepted = false;
+		int? moonlightExit = null;
+		IReadOnlyList<string> clients = [];
+
 		bool ok = await RunOnDeckAsync("Сопряжение Moonlight с Sunshine…", async (d, ct) =>
 		{
 			// Sunshine 2026.9+ подтверждает PIN для конкретного ожидающего запроса; null — старая версия
@@ -454,6 +460,7 @@ internal sealed partial class MainWindow
 				if (before == null)
 				{
 					paired = await SunshineHost.SendPinAsync(d, credentials, null, pin, clientName, ct);
+					requestSeen = pinAccepted = paired;
 					continue;
 				}
 
@@ -461,7 +468,8 @@ internal sealed partial class MainWindow
 				if (SunshineHost.PickPairing(pending, known, local) is { } request)
 				{
 					// Ответ приходит после обмена ключами; при неудаче запрос уже снят, и Moonlight сам покажет ошибку
-					paired = await SunshineHost.SendPinAsync(d, credentials, request.Id, pin, clientName, ct);
+					requestSeen = true;
+					paired = pinAccepted = await SunshineHost.SendPinAsync(d, credentials, request.Id, pin, clientName, ct);
 					break;
 				}
 			}
@@ -477,7 +485,9 @@ internal sealed partial class MainWindow
 				// Moonlight всё ещё показывает окно — оставляем его пользователю
 			}
 
-			paired = (await SunshineHost.PairedClientsAsync(d, credentials, ct)).Contains(clientName);
+			moonlightExit = pairing.HasExited ? pairing.ExitCode : null;
+			clients = await SunshineHost.PairedClientsAsync(d, credentials, ct);
+			paired = clients.Contains(clientName);
 		});
 
 		if (ok && paired)
@@ -490,9 +500,7 @@ internal sealed partial class MainWindow
 		}
 		else if (ok)
 		{
-			await Dialogs.Error(this,
-				"Sunshine не подтвердил сопряжение. Проверьте, что Moonlight видит Deck по адресу " + host +
-				" (при включённом VPN добавьте Moonlight.exe в исключения) и что окно Moonlight не показывает ошибку.");
+			await Dialogs.Error(this, Moonlight.PairingFailure(host, clientName, requestSeen, pinAccepted, moonlightExit, clients));
 		}
 
 		return ok && paired;

@@ -58,6 +58,23 @@ public sealed class SunshineParsingTests
 		Assert.Empty(SunshineHost.ParseClientNames("not json"));
 	}
 
+	[Fact]
+	public void PairingFailureNamesTheStep()
+	{
+		string unreachable = Moonlight.PairingFailure("10.23.3.120", "SteamdeckViewer-PC", false, false, 1, []);
+		Assert.Contains("не дошёл до Sunshine", unreachable);
+		Assert.Contains("10.23.3.120", unreachable);
+		Assert.Contains("кодом 1", unreachable);
+		Assert.Contains("клиенты: нет.", unreachable);
+
+		string rejected = Moonlight.PairingFailure("h", "SteamdeckViewer-PC", true, false, null, ["phone"]);
+		Assert.Contains("не принял PIN", rejected);
+		Assert.Contains("Окно Moonlight ещё открыто", rejected);
+		Assert.Contains("клиенты: phone.", rejected);
+
+		Assert.Contains("«SteamdeckViewer-PC» нет среди", Moonlight.PairingFailure("h", "SteamdeckViewer-PC", true, true, 0, ["phone"]));
+	}
+
 	[Theory]
 	[InlineData("{\"status\":true}\n200", 200, "{\"status\":true}")]
 	[InlineData("{\"error\":\"x\"}\r\n400\n", 400, "{\"error\":\"x\"}")]

@@ -71,6 +71,28 @@ public static class Moonlight
 		return Process.Start(info) ?? throw new InvalidOperationException("Не удалось запустить Moonlight.");
 	}
 
+	// Почему сопряжение не удалось — по шагу, на котором оно остановилось
+	public static string PairingFailure(string host, string clientName, bool requestSeen, bool pinAccepted, int? moonlightExit, IReadOnlyList<string> pairedClients)
+	{
+		string reason = !requestSeen
+			? $"Запрос сопряжения от Moonlight не дошёл до Sunshine: Moonlight не достучался до Deck по адресу {host}. " +
+			  "Если на ПК включён VPN, Moonlight.exe должен быть в исключениях раздельного туннелирования, как и CarX Deck Tools: " +
+			  "без этого видны только адреса из подсети самого ПК, и стоит Deck перейти, например, с кабеля на Wi-Fi, как Moonlight его теряет."
+			: !pinAccepted
+				? "Sunshine получил запрос Moonlight, но не принял PIN. Повторите «Сопрячь с Deck»."
+				: $"Sunshine принял PIN, но «{clientName}» нет среди сопряжённых клиентов.";
+
+		string exit = moonlightExit switch
+		{
+			null => "Окно Moonlight ещё открыто — посмотрите, что оно пишет.",
+			0 => "Moonlight завершился без ошибки.",
+			_ => $"Moonlight завершился с кодом {moonlightExit}."
+		};
+
+		string clients = pairedClients.Count == 0 ? "нет" : string.Join(", ", pairedClients);
+		return $"Moonlight не сопряжён с Sunshine на Deck.\n\n{reason}\n\n{exit}\nСопряжённые с Sunshine клиенты: {clients}.";
+	}
+
 	public static string NewPin()
 	{
 		return System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 10000).ToString("D4");
