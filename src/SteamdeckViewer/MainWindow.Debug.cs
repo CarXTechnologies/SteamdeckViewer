@@ -61,14 +61,21 @@ internal sealed partial class MainWindow
 			        "Открыть запись: Unity → Profiler → Load.")));
 
 		var mangoHudGroup = Ui.Group("Производительность Deck (MangoHud)", Ui.Column(10,
-			Ui.Note("Только для билда, залитого через программу и запущенного её кнопками или из Unity. " +
-			        "На игры из магазина Steam и другие ярлыки в библиотеке Deck не действует."),
+			Ui.Note("Галки действуют на билд, залитый через программу и запущенный её кнопками или из Unity. " +
+			        "Для игры из магазина Steam — кнопка «Включить для игры из Steam» ниже."),
 			m_cbMangoHudOverlay,
 			m_cbMangoHudLog,
 			Ui.Row(new TextBlock { Text = "Записать секунд:", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center }, m_tbMangoHudSeconds),
 			Ui.Row(
 				Ui.Button("Скачать последний замер…", DownloadMangoHudLogAsync),
 				Ui.Button("Удалить замеры на Deck", DeleteMangoHudLogsAsync)),
+			Ui.Row(
+				Ui.Button("Включить для игры из Steam", () => SetSteamLaunchOptionsAsync(enable: true)),
+				Ui.Button("Выключить для игры из Steam", () => SetSteamLaunchOptionsAsync(enable: false))),
+			Ui.Hint("Игра из магазина Steam с AppID из профиля (поле «Steam AppID» на вкладке «Билды»): программа записывает в её параметры " +
+			        "запуска строку «env MANGOHUD=1 MANGOHUD_CONFIG=… %command%» по галкам выше, замеры ложатся туда же. Записывает через " +
+			        "CEF-отладку Steam (вкладка «Устройство»), без неё строка копируется в буфер обмена для ручной вставки. Параметры запуска " +
+			        "заменяются целиком, прежние программа пишет в окно Player.log; «Выключить» их очищает."),
 			Ui.Hint("MangoHud входит в SteamOS. Оверлей показывает FPS, время кадра с графиком, загрузку, температуры и мощность CPU/GPU, " +
 			        "память и батарею; запись пишет то же в CSV на каждый кадр. Включается со следующего запуска, " +
 			        "Development-сборка не нужна. После скачивания программа покажет итоги: средний FPS, 1% и 0,1% low, " +
@@ -206,6 +213,74 @@ internal sealed partial class MainWindow
 		string text = summary.Describe();
 		m_playerLog.Append("[CarX Deck Tools] MangoHud, " + latest.Name + ":\n" + text);
 		await Dialogs.Info(this, text + "\n\nФайл: " + localPath, "MangoHud");
+	}
+
+	// MangoHud для игры из магазина Steam: её запускает Steam, поэтому переменные идут через параметры запуска игры
+	private async Task SetSteamLaunchOptionsAsync(bool enable)
+	{
+		BuildProfile profile = CurrentProfile;
+		if (!uint.TryParse(profile.SteamAppId.Trim(), out uint appId))
+		{
+			await Dialogs.Info(this, "Укажите Steam AppID игры в профиле: вкладка «Билды», поле «Steam AppID» (у CarX Street — 1114150).");
+			return;
+		}
+
+		if (enable && !profile.MangoHudOverlay && !profile.MangoHudLog)
+		{
+			await Dialogs.Info(this, "Отметьте «Показывать оверлей MangoHud в игре» или «Записывать замеры в CSV».");
+			return;
+		}
+
+		string options = string.Empty;
+		string? before = null;
+		bool noCef = false;
+		bool ok = await RunOnDeckAsync(enable ? "Запись параметров запуска в Steam…" : "Очистка параметров запуска в Steam…", async (deck, ct) =>
+		{
+			if (enable)
+			{
+				options = MangoHudCapture.SteamLaunchOptions((await MangoHudCapture.PrepareAsync(deck, profile, ct))!);
+			}
+
+			try
+			{
+				using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+				timeout.CancelAfter(TimeSpan.FromSeconds(20));
+				before = await SteamCef.SetLaunchOptionsAsync(deck, appId, options, timeout.Token);
+			}
+			catch (SteamCefUnavailableException)
+			{
+				noCef = true;
+			}
+		});
+
+		if (!ok)
+		{
+			return;
+		}
+
+		if (noCef)
+		{
+			if (enable)
+			{
+				await CopyToClipboardAsync(options);
+			}
+
+			await Dialogs.Info(this,
+				"CEF-отладка Steam недоступна, поэтому параметры запуска программа изменить не может. Включите её на вкладке «Устройство» " +
+				"(«Включить CEF-отладку Steam», затем «Перезапустить Steam») и повторите." +
+				(enable ? "\n\nСтрока уже в буфере обмена, её можно вставить вручную: свойства игры → «Параметры запуска»:\n\n" + options : string.Empty),
+				"Параметры запуска Steam");
+			return;
+		}
+
+		if (!string.IsNullOrEmpty(before) && before != options)
+		{
+			m_playerLog.Append($"[CarX Deck Tools] прежние параметры запуска игры {appId} в Steam: {before}");
+		}
+
+		SetStatus(enable
+			? $"MangoHud включён для игры {appId} из Steam — со следующего запуска"
+			: $"Параметры запуска игры {appId} в Steam очищены");
 	}
 
 	private async Task DeleteMangoHudLogsAsync()
