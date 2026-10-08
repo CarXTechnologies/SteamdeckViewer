@@ -74,6 +74,8 @@ internal sealed partial class MainWindow : Window
 				m_pendingCommand = null;
 				await RunExternalCommandAsync(command);
 			}
+
+			StartUpdateChecks();
 		};
 
 		Closed += (_, _) =>
@@ -168,13 +170,16 @@ internal sealed partial class MainWindow : Window
 		var help = new MenuItem { Header = "Как подготовить Deck" };
 		help.Click += async (_, _) => await Dialogs.Info(this, SetupHelpText, "Подготовка Steam Deck");
 
+		var checkUpdate = new MenuItem { Header = "Проверить обновления" };
+		checkUpdate.Click += async (_, _) => await CheckForUpdateAsync(manual: true);
+
 		return new Menu
 		{
 			Items =
 			{
 				new MenuItem { Header = "Вид", Items = { new MenuItem { Header = "Тема", Items = { themeSystem, themeLight, themeDark } } } },
 				new MenuItem { Header = "Настройки", Items = { autoConnect, openKeys } },
-				new MenuItem { Header = "Справка", Items = { help } }
+				new MenuItem { Header = "Справка", Items = { help, checkUpdate } }
 			}
 		};
 	}

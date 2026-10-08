@@ -11,17 +11,23 @@ internal static class Dialogs
 {
 	public static Task Error(Window owner, string message)
 	{
-		return ShowMessageAsync(owner, message, "Ошибка", yesNo: false);
+		return ShowMessageAsync(owner, message, "Ошибка", "OK", null);
 	}
 
 	public static Task Info(Window owner, string message, string caption = AppInfo.Name)
 	{
-		return ShowMessageAsync(owner, message, caption, yesNo: false);
+		return ShowMessageAsync(owner, message, caption, "OK", null);
 	}
 
 	public static Task<bool> YesNo(Window owner, string message, string caption)
 	{
-		return ShowMessageAsync(owner, message, caption, yesNo: true);
+		return ShowMessageAsync(owner, message, caption, "Да", "Нет");
+	}
+
+	// Вопрос со своими подписями кнопок; true — нажата первая
+	public static Task<bool> Ask(Window owner, string message, string caption, string accept, string decline)
+	{
+		return ShowMessageAsync(owner, message, caption, accept, decline);
 	}
 
 	public static async Task<string?> Prompt(Window owner, string caption, string label, string initial = "", bool password = false)
@@ -73,26 +79,21 @@ internal static class Dialogs
 		return await dlg.ShowDialog<bool?>(owner) == true;
 	}
 
-	private static async Task<bool> ShowMessageAsync(Window owner, string message, string caption, bool yesNo)
+	// decline == null — одна кнопка, она же закрывает окно по Esc
+	private static async Task<bool> ShowMessageAsync(Window owner, string message, string caption, string accept, string? decline)
 	{
 		var dlg = CreateDialog(owner, caption, 520);
 		var text = new SelectableTextBlock { Text = message, TextWrapping = TextWrapping.Wrap };
 
 		var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
-		if (yesNo)
+		var yes = new Button { Content = accept, MinWidth = 90, IsDefault = true, IsCancel = decline == null };
+		yes.Click += (_, _) => dlg.Close(true);
+		buttons.Children.Add(yes);
+		if (decline != null)
 		{
-			var yes = new Button { Content = "Да", MinWidth = 90, IsDefault = true };
-			var no = new Button { Content = "Нет", MinWidth = 90, IsCancel = true };
-			yes.Click += (_, _) => dlg.Close(true);
+			var no = new Button { Content = decline, MinWidth = 90, IsCancel = true };
 			no.Click += (_, _) => dlg.Close(false);
-			buttons.Children.Add(yes);
 			buttons.Children.Add(no);
-		}
-		else
-		{
-			var ok = new Button { Content = "OK", MinWidth = 90, IsDefault = true, IsCancel = true };
-			ok.Click += (_, _) => dlg.Close(true);
-			buttons.Children.Add(ok);
 		}
 
 		dlg.Content = BuildBody(new ScrollViewer { Content = text, MaxHeight = 480 }, buttons);
