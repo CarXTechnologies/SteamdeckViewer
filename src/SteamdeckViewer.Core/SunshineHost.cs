@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace SteamdeckViewer.Core;
 
@@ -70,6 +71,7 @@ public static class SunshineHost
 	public const string Unit = "sdv-sunshine.service";
 	public const string DesktopUnit = "sdv-sunshine-desktop.service";
 	public const int WebPort = 47990;
+	public const int GameStreamPort = 47989;
 
 	internal const string StateDirectory = "/var/lib/steamdeckviewer";
 	internal const string UnitPath = "/etc/systemd/system/" + Unit;
@@ -242,6 +244,25 @@ public static class SunshineHost
 		string body = JsonSerializer.Serialize(PinBody(pairingId, pin, clientName));
 		ApiResponse response = await CallApiAsync(deck, credentials, "POST", "/api/pin", body, PinMaxTime, ct);
 		return IsStatusTrue(EnsureOk(response));
+	}
+
+	// Имя и uuid, которыми Sunshine представляется Moonlight (serverinfo на порту протокола GameStream, без входа).
+	// Пока Sunshine ни с кем не сопряжён, uuid он не сохраняет и берёт новый при каждом запуске. null — Sunshine не отвечает
+	public static async Task<(string Name, string Uuid)?> ServerIdentityAsync(DeckConnection deck, CancellationToken ct)
+	{
+		CommandResult result = await deck.RunAsync($"curl -s --max-time 5 http://127.0.0.1:{GameStreamPort}/serverinfo", ct);
+		return ParseServerIdentity(result.Output);
+	}
+
+	internal static (string Name, string Uuid)? ParseServerIdentity(string serverInfo)
+	{
+		string? Tag(string name)
+		{
+			Match match = Regex.Match(serverInfo, $"<{name}>([^<]+)</{name}>");
+			return match.Success ? match.Groups[1].Value.Trim() : null;
+		}
+
+		return Tag("uniqueid") is { } uuid ? (Tag("hostname") ?? string.Empty, uuid) : null;
 	}
 
 	public static async Task<IReadOnlyList<string>> PairedClientsAsync(DeckConnection deck, SunshineCredentials credentials, CancellationToken ct)
