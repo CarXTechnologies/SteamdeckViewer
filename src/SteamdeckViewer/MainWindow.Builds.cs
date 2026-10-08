@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -99,6 +100,7 @@ internal sealed partial class MainWindow
 			         Ui.Button("Запустить", LaunchGameAsync),
 			         Ui.Button("Остановить", StopGameAsync),
 			         Ui.Button("Скриншот", TakeScreenshotAsync),
+			         Ui.Button("Отчёт для задачи", CreateBugReportAsync),
 			         m_btnCheckLayout,
 			         Ui.Button("Удалить с Deck", DeleteGameAsync)
 		         })
@@ -558,6 +560,33 @@ internal sealed partial class MainWindow
 
 		await Dialogs.Error(this, text);
 		return false;
+	}
+
+	// Архив для задачи (BugReport) — рядом со скриншотами; Проводник сразу показывает файл, чтобы перетащить его в задачу
+	private async Task CreateBugReportAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		string folder = Path.Combine(ExchangeRoot, "Отчёты");
+		string path = Path.Combine(folder, BugReport.FileName(profile, DateTime.Now));
+		IReadOnlyList<string> missing = [];
+		if (!await RunOnDeckAsync("Сбор отчёта для задачи…", async (deck, ct) =>
+		    {
+			    Directory.CreateDirectory(folder);
+			    missing = await BugReport.CreateAsync(deck, profile, path, AppInfo.AppVersionText, DateTime.Now, ct);
+		    }))
+		{
+			return;
+		}
+
+		SetStatus($"Отчёт сохранён: {path}" + (missing.Count > 0 ? $" (не собрано: {missing.Count}, см. report.txt)" : string.Empty));
+		try
+		{
+			Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+		}
+		catch
+		{
+			// Проводник не открылся — путь есть в строке состояния
+		}
 	}
 
 	private async Task LaunchGameAsync()
