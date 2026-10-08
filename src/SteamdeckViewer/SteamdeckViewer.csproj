@@ -35,13 +35,6 @@
     <ItemGroup>
         <!--Иконка окна; иконка exe — ApplicationIcon выше-->
         <EmbeddedResource Include="steamdeckviewer_icon.ico" />
-        <!--Уведомления об авторских правах сторонних компонентов: MIT/BSD требуют,
-            чтобы текст лицензии ехал вместе с бинарником, поэтому файл кладётся
-            рядом со сборкой (в single-file он не встраивается)-->
-        <None Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-        </None>
     </ItemGroup>
 
     <ItemGroup>
