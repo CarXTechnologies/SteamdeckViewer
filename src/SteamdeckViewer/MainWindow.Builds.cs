@@ -32,6 +32,9 @@ internal sealed partial class MainWindow
 	private readonly TextBox m_tbExecutable = new();
 	private readonly TextBox m_tbArguments = new() { PlaceholderText = "-screen-fullscreen 1 -logFile …" };
 	private readonly TextBox m_tbEnvironment = new() { PlaceholderText = "KEY=VALUE KEY2=VALUE2" };
+	private readonly ComboBox m_cbPreset = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+	private readonly TextBlock m_presetHint = new() { Opacity = 0.7, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+	private const string NoPreset = "Без набора";
 	private readonly ComboBox m_cbRuntime = new() { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = RuntimeNames };
 	private readonly ComboBox m_cbLaunchMode = new() { HorizontalAlignment = HorizontalAlignment.Stretch, ItemsSource = LaunchModeNames };
 	private readonly TextBox m_tbExcludes = new();
@@ -83,6 +86,9 @@ internal sealed partial class MainWindow
 		form.Add("Исполняемый файл", m_tbExecutable, Ui.Button("Выбрать…", BrowseExecutableAsync));
 		form.Add("Аргументы запуска", m_tbArguments);
 		form.Add("Переменные окружения", m_tbEnvironment);
+		form.Add("Набор запуска", m_cbPreset,
+			Ui.Row(Ui.Button("Новый…", AddPresetAsync), Ui.Button("Изменить…", EditPresetAsync), Ui.Button("Удалить", RemovePresetAsync)));
+		form.AddFull(m_presetHint);
 		form.Add("Среда выполнения", m_cbRuntime);
 		form.Add("Способ запуска", m_cbLaunchMode);
 		form.Add("Не заливать", m_tbExcludes);
@@ -198,6 +204,12 @@ internal sealed partial class MainWindow
 
 		m_tbProfileName.LostFocus += (_, _) => ReloadProfiles();
 
+		m_cbPreset.SelectionChanged += (_, _) =>
+		{
+			UpdateProfile(p => p.SelectedPreset = (m_cbPreset.SelectedItem as LaunchPreset)?.Name);
+			UpdatePresetHint(CurrentProfile);
+		};
+
 		m_cbRuntime.SelectionChanged += (_, _) => UpdateProfile(p => p.Runtime = (DeckRuntime)Math.Max(0, m_cbRuntime.SelectedIndex));
 		m_cbLaunchMode.SelectionChanged += (_, _) => UpdateProfile(p => p.LaunchMode = (LaunchMode)Math.Max(0, m_cbLaunchMode.SelectedIndex));
 		m_cbDeleteExtraneous.IsCheckedChanged += (_, _) => UpdateProfile(p => p.DeleteExtraneous = m_cbDeleteExtraneous.IsChecked == true);
@@ -266,8 +278,87 @@ internal sealed partial class MainWindow
 		m_cbMangoHudLog.IsChecked = profile.MangoHudLog;
 		m_tbMangoHudSeconds.Text = profile.MangoHudLogSeconds > 0 ? profile.MangoHudLogSeconds.ToString() : string.Empty;
 		m_btnCheckLayout.IsVisible = profile.CheckPlayerLayout;
+		ReloadPresets(profile);
 		m_loadingProfile = false;
 		UpdateGameIdHint(profile);
+		UpdatePresetHint(profile);
+	}
+
+	// ---------------------------------------------------------------- наборы запуска
+
+	private void ReloadPresets(BuildProfile profile)
+	{
+		bool loading = m_loadingProfile;
+		m_loadingProfile = true;
+		m_cbPreset.ItemsSource = new object[] { NoPreset }.Concat(profile.Presets).ToList();
+		m_cbPreset.SelectedItem = (object?)profile.ActivePreset ?? NoPreset;
+		m_loadingProfile = loading;
+	}
+
+	private void UpdatePresetHint(BuildProfile profile)
+	{
+		m_presetHint.Text = profile.ActivePreset is { } preset
+			? $"Добавится к каждому запуску: аргументы {Or(preset.Arguments)}, окружение {Or(preset.EnvironmentVariables)}"
+			: "Набор запуска — аргументы и переменные поверх профиля (например, -force-vulkan), их можно переключать перед запуском.";
+
+		static string Or(string value)
+		{
+			return string.IsNullOrWhiteSpace(value) ? "—" : value;
+		}
+	}
+
+	private async Task AddPresetAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		var preset = new LaunchPreset { Name = "Набор " + (profile.Presets.Count + 1) };
+		if (!await Dialogs.EditPreset(this, preset, profile.Presets.Select(p => p.Name).ToList(), "Новый набор запуска"))
+		{
+			return;
+		}
+
+		profile.Presets.Add(preset);
+		profile.SelectedPreset = preset.Name;
+		SavePresets(profile);
+	}
+
+	private async Task EditPresetAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		if (profile.ActivePreset is not { } preset)
+		{
+			await Dialogs.Info(this, "Выберите набор запуска.");
+			return;
+		}
+
+		if (await Dialogs.EditPreset(this, preset, profile.Presets.Where(p => p != preset).Select(p => p.Name).ToList(), "Набор запуска"))
+		{
+			profile.SelectedPreset = preset.Name;
+			SavePresets(profile);
+		}
+	}
+
+	private async Task RemovePresetAsync()
+	{
+		BuildProfile profile = CurrentProfile;
+		if (profile.ActivePreset is not { } preset)
+		{
+			await Dialogs.Info(this, "Выберите набор запуска.");
+			return;
+		}
+
+		if (await Dialogs.YesNo(this, $"Удалить набор запуска «{preset.Name}»?", "Набор запуска"))
+		{
+			profile.Presets.Remove(preset);
+			profile.SelectedPreset = null;
+			SavePresets(profile);
+		}
+	}
+
+	private void SavePresets(BuildProfile profile)
+	{
+		ReloadPresets(profile);
+		UpdatePresetHint(profile);
+		ScheduleSave();
 	}
 
 	private void UpdateGameIdHint(BuildProfile profile)
@@ -623,7 +714,13 @@ internal sealed partial class MainWindow
 			notes.Add($"MangoHud: замеры пишутся в {MangoHudCapture.Folder(profile)} (вкладка «Отладка» → «Скачать последний замер»)");
 		}
 
-		await DevkitGames.LaunchAsync(deck, profile, new LaunchExtras(arguments, environment), ct);
+		if (profile.ActivePreset is { } preset)
+		{
+			notes.Insert(0, $"набор запуска «{preset.Name}»: аргументы {(preset.Arguments.Length > 0 ? preset.Arguments : "—")}, " +
+			                $"окружение {(preset.EnvironmentVariables.Length > 0 ? preset.EnvironmentVariables : "—")}");
+		}
+
+		await DevkitGames.LaunchAsync(deck, profile, LaunchExtras.Combine(profile.ActivePreset, arguments, environment), ct);
 		return notes;
 	}
 

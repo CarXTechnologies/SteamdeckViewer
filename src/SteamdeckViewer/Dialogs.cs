@@ -80,6 +80,42 @@ internal static class Dialogs
 	}
 
 	// decline == null — одна кнопка, она же закрывает окно по Esc
+	// otherNames — названия остальных наборов профиля: два набора с одним названием не различить в списке
+	public static async Task<bool> EditPreset(Window owner, LaunchPreset preset, IReadOnlyCollection<string> otherNames, string caption)
+	{
+		var name = new TextBox { Text = preset.Name, PlaceholderText = "Vulkan, без звука, отладка сети…" };
+		var arguments = new TextBox { Text = preset.Arguments, PlaceholderText = "-force-vulkan" };
+		var environment = new TextBox { Text = preset.EnvironmentVariables, PlaceholderText = "KEY=VALUE KEY2=VALUE2" };
+		var error = new TextBlock { Foreground = Ui.WarnBrush, TextWrapping = TextWrapping.Wrap, IsVisible = false };
+
+		var form = new FormGrid();
+		form.Add("Название", name);
+		form.Add("Аргументы", arguments);
+		form.Add("Переменные окружения", environment);
+		form.AddFull(Ui.Hint("Добавляются к аргументам и переменным профиля на каждом запуске, пока набор выбран."));
+		form.AddFull(error);
+
+		var dlg = CreateDialog(owner, caption, 560);
+		dlg.Content = BuildBody(form.Grid, OkCancel(dlg, () =>
+		{
+			string value = name.Text?.Trim() ?? string.Empty;
+			if (value.Length == 0 || otherNames.Contains(value))
+			{
+				error.Text = value.Length == 0 ? "Укажите название." : "Набор с таким названием уже есть.";
+				error.IsVisible = true;
+				return;
+			}
+
+			preset.Name = value;
+			preset.Arguments = arguments.Text?.Trim() ?? string.Empty;
+			preset.EnvironmentVariables = environment.Text?.Trim() ?? string.Empty;
+			dlg.Close(true);
+		}));
+		dlg.Opened += (_, _) => name.Focus();
+
+		return await dlg.ShowDialog<bool?>(owner) == true;
+	}
+
 	private static async Task<bool> ShowMessageAsync(Window owner, string message, string caption, string accept, string? decline)
 	{
 		var dlg = CreateDialog(owner, caption, 520);
