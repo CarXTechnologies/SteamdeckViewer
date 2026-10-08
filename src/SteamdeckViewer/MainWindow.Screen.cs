@@ -420,9 +420,58 @@ internal sealed partial class MainWindow
 	}
 
 	// Moonlight запрашивает сопряжение со своим PIN, а мы подтверждаем тот же PIN в Sunshine через API
+	// Записи Moonlight с адресом Deck и чужим uuid (Sunshine переустановили, адрес раньше был у другого ПК) не дают
+	// Moonlight найти Deck (MoonlightHosts). false — Moonlight открыт и мешает их убрать
+	private async Task<bool> FixMoonlightHostsAsync(DeckConnection deck)
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			return true;
+		}
+
+		(string Name, string Uuid)? identity = null;
+		try
+		{
+			identity = await Task.Run(() => SunshineHost.ServerIdentityAsync(deck, m_lifetime.Token));
+		}
+		catch
+		{
+			// Sunshine не отвечает — сверять не с чем, Moonlight сам скажет, что не видит Deck
+		}
+
+		if (identity is not { } sunshine)
+		{
+			return true;
+		}
+
+		using Microsoft.Win32.RegistryKey? settings = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(MoonlightHosts.RegistryPath, writable: true);
+		if (settings == null || MoonlightHosts.FindStale(settings, deck.Device.Host, sunshine.Name, sunshine.Uuid).Count == 0)
+		{
+			return true;
+		}
+
+		// Moonlight при выходе записывает свои настройки поверх наших: окно стрима программы закрываем, чужое — просим закрыть
+		CloseStream();
+		if (Process.GetProcessesByName("Moonlight").Length > 0)
+		{
+			await Dialogs.Info(this,
+				$"В настройках Moonlight осталась старая запись Deck ({deck.Device.Host}) — например, от Sunshine до переустановки. " +
+				"Из-за неё Moonlight не находит Deck. Закройте Moonlight и повторите: программа уберёт эту запись сама.", "Moonlight");
+			return false;
+		}
+
+		IReadOnlyList<(MoonlightHost Host, MoonlightHostFix Fix)> fixes = MoonlightHosts.Fix(settings, deck.Device.Host, sunshine.Name, sunshine.Uuid);
+		string summary = string.Join("; ", fixes.Select(f => f.Fix == MoonlightHostFix.Remove
+			? $"удалена «{f.Host.Name}» ({f.Host.Uuid})"
+			: $"у «{f.Host.Name}» ({f.Host.Uuid}) забыт адрес {deck.Device.Host}"));
+		m_playerLog.Append("[CarX Deck Tools] записи Moonlight, мешавшие найти Deck: " + summary);
+		SetStatus("Из настроек Moonlight убраны устаревшие записи Deck");
+		return true;
+	}
+
 	private async Task<bool> PairMoonlightAsync(bool quiet)
 	{
-		if (!await EnsureStreamPrerequisitesAsync() || m_deck is not { Device.Sunshine: { } credentials } deck)
+		if (!await EnsureStreamPrerequisitesAsync() || m_deck is not { Device.Sunshine: { } credentials } deck || !await FixMoonlightHostsAsync(deck))
 		{
 			return false;
 		}
@@ -538,7 +587,8 @@ internal sealed partial class MainWindow
 			return;
 		}
 
-		if (!paired && !await PairMoonlightAsync(quiet: true))
+		// Сопряжение само чистит записи Moonlight; стрим без него — тоже после чистки: Deck мог сменить адрес
+		if (paired ? !await FixMoonlightHostsAsync(deck) : !await PairMoonlightAsync(quiet: true))
 		{
 			return;
 		}
