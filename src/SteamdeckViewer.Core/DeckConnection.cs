@@ -246,6 +246,25 @@ public sealed class DeckConnection : IDisposable
 		}
 	}
 
+	// Туннель с 127.0.0.1 на ПК (порт выбирает система) на порт, который слушает сам Deck, — например, отладка Steam
+	public DeckTunnel OpenTunnel(uint remotePort)
+	{
+		var port = new ForwardedPortLocal("127.0.0.1", 0, "127.0.0.1", remotePort);
+		m_ssh.AddForwardedPort(port);
+		try
+		{
+			port.Start();
+		}
+		catch
+		{
+			m_ssh.RemoveForwardedPort(port);
+			port.Dispose();
+			throw;
+		}
+
+		return new DeckTunnel(m_ssh, port);
+	}
+
 	// Путь вида ~/x -> /home/deck/x для SFTP, который тильду не понимает
 	public string ResolvePath(string path)
 	{
@@ -281,5 +300,35 @@ public sealed class DeckConnection : IDisposable
 		{
 			key.Dispose();
 		}
+	}
+}
+
+public sealed class DeckTunnel : IDisposable
+{
+	private readonly SshClient m_ssh;
+	private readonly ForwardedPortLocal m_port;
+
+	internal DeckTunnel(SshClient ssh, ForwardedPortLocal port)
+	{
+		m_ssh = ssh;
+		m_port = port;
+	}
+
+	// SSH.NET после Start записывает в BoundPort порт, выданный системой
+	public int LocalPort => (int)m_port.BoundPort;
+
+	public void Dispose()
+	{
+		try
+		{
+			m_port.Stop();
+			m_ssh.RemoveForwardedPort(m_port);
+		}
+		catch
+		{
+			// соединение уже закрыто
+		}
+
+		m_port.Dispose();
 	}
 }

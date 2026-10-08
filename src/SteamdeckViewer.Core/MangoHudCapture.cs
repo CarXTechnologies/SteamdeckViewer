@@ -122,6 +122,13 @@ public static class MangoHudCapture
 		return Environment(profile, deck.ResolvePath(Folder(profile)));
 	}
 
+	// Параметры запуска Steam для игры из магазина, которую программа сама не запускает. Steam в Game Mode вычищает
+	// MANGOHUD* из окружения игры, а env внутри команды запуска ставит их уже после него
+	public static string SteamLaunchOptions(IReadOnlyDictionary<string, string> environment)
+	{
+		return "env " + string.Join(' ', environment.Select(kv => kv.Key + "=" + Sh.Quote(kv.Value))) + " %command%";
+	}
+
 	public static async Task<MangoHudLog?> FindLatestAsync(DeckConnection deck, BuildProfile profile, CancellationToken ct)
 	{
 		Dictionary<string, (long Size, long MTime)> files = await FolderSync.ListRemoteAsync(deck, Folder(profile), ct);
