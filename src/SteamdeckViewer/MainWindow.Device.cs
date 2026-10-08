@@ -11,24 +11,6 @@ namespace SteamdeckViewer;
 // Вкладка «Устройство»: состояние Deck, режимы, питание, SSH-терминал и CEF-отладка Steam
 internal sealed partial class MainWindow
 {
-	private static readonly (string Key, string Label)[] StatusRows =
-	[
-		("host", "Устройство"),
-		("os", "Система"),
-		("kernel", "Ядро"),
-		("session", "Режим"),
-		("steam", "Steam"),
-		("battery", "Батарея"),
-		("temp", "Температура"),
-		("gpu", "Загрузка GPU"),
-		("fan", "Вентилятор"),
-		("mem", "Память"),
-		("disk", "Свободно в /home"),
-		("ip", "Сеть"),
-		("uptime", "Работает"),
-		("cef", "CEF-отладка Steam")
-	];
-
 	private readonly Dictionary<string, TextBlock> m_statusValues = [];
 	private readonly CheckBox m_cbAutoRefresh = new() { Content = "Обновлять каждые 5 с" };
 	private readonly DispatcherTimer m_statusTimer = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -39,11 +21,11 @@ internal sealed partial class MainWindow
 	private Control BuildDeviceTab()
 	{
 		var values = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-		for (int i = 0; i < StatusRows.Length; i++)
+		for (int i = 0; i < DeckStatus.Rows.Length; i++)
 		{
 			values.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-			var label = new TextBlock { Text = StatusRows[i].Label, Opacity = 0.75, Margin = new Thickness(0, 0, 16, 6) };
+			var label = new TextBlock { Text = DeckStatus.Rows[i].Label, Opacity = 0.75, Margin = new Thickness(0, 0, 16, 6) };
 			Grid.SetRow(label, i);
 			values.Children.Add(label);
 
@@ -51,7 +33,7 @@ internal sealed partial class MainWindow
 			Grid.SetRow(value, i);
 			Grid.SetColumn(value, 1);
 			values.Children.Add(value);
-			m_statusValues[StatusRows[i].Key] = value;
+			m_statusValues[DeckStatus.Rows[i].Key] = value;
 		}
 
 		m_cbAutoRefresh.IsChecked = m_settings.AutoRefreshStatus;
@@ -136,22 +118,10 @@ internal sealed partial class MainWindow
 	private void ShowStatus(DeckStatus s, DeckConnection deck)
 	{
 		m_lastStatus = s;
-
-		string version = string.Join(" ", new[] { s["version"], s["build"].Length > 0 ? $"(build {s["build"]})" : string.Empty }.Where(v => v.Length > 0));
-		SetValue("host", s["host"]);
-		SetValue("os", $"{s["os"]} {version}".Trim());
-		SetValue("kernel", s["kernel"]);
-		SetValue("session", s.IsGameMode ? "Game Mode (gamescope)" : s.IsDesktop ? "Рабочий стол (KDE Plasma)" : "не определён");
-		SetValue("steam", s.SteamRunning ? "запущен" : "не запущен");
-		SetValue("battery", s["battery"].Length > 0 ? $"{s["battery"]} % ({TranslateBattery(s["battery_status"])})" : "—");
-		SetValue("temp", $"APU {s.Temperature("k10temp")}, GPU {s.Temperature("amdgpu")}");
-		SetValue("gpu", s["gpu_busy"].Length > 0 ? s["gpu_busy"] + " %" : "—");
-		SetValue("fan", s["fan"].Length > 0 ? s["fan"] + " об/мин" : "—");
-		SetValue("mem", FormatPair(s["mem"], kilobytes: true, "занято", used: true));
-		SetValue("disk", FormatPair(s["disk"], kilobytes: false, "из", used: false));
-		SetValue("ip", s["ip"].Length > 0 ? s["ip"] : deck.Device.Host);
-		SetValue("uptime", long.TryParse(s["uptime"], out long seconds) ? FormatUptime(TimeSpan.FromSeconds(seconds)) : "—");
-		SetValue("cef", s.CefDebuggingEnabled ? "включена (порт 8081 после перезапуска Steam)" : "выключена");
+		foreach ((string key, _) in DeckStatus.Rows)
+		{
+			SetValue(key, s.Display(key, deck.Device.Host));
+		}
 
 		m_hostKeyText.Text = deck.HostKeyFingerprint;
 	}
@@ -170,38 +140,6 @@ internal sealed partial class MainWindow
 	private void SetValue(string key, string value)
 	{
 		m_statusValues[key].Text = string.IsNullOrWhiteSpace(value) ? "—" : value;
-	}
-
-	// "total available" из /proc/meminfo (КБ) или "available total" из df (байты)
-	private static string FormatPair(string raw, bool kilobytes, string joiner, bool used)
-	{
-		string[] parts = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-		if (parts.Length != 2 || !long.TryParse(parts[0], out long a) || !long.TryParse(parts[1], out long b))
-		{
-			return "—";
-		}
-
-		long scale = kilobytes ? 1024 : 1;
-		return used
-			? $"{DeckStatus.FormatBytes((a - b) * scale)} {joiner} из {DeckStatus.FormatBytes(a * scale)}"
-			: $"{DeckStatus.FormatBytes(a * scale)} {joiner} {DeckStatus.FormatBytes(b * scale)}";
-	}
-
-	private static string FormatUptime(TimeSpan time)
-	{
-		return time.TotalDays >= 1 ? $"{(int)time.TotalDays} д {time.Hours} ч" : $"{time.Hours} ч {time.Minutes} мин";
-	}
-
-	private static string TranslateBattery(string status)
-	{
-		return status switch
-		{
-			"Charging" => "заряжается",
-			"Discharging" => "разряжается",
-			"Full" => "заряжена",
-			"Not charging" => "не заряжается",
-			_ => status
-		};
 	}
 
 	// ---------------------------------------------------------------- действия

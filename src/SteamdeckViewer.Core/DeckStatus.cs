@@ -67,6 +67,48 @@ public sealed class DeckStatus
 		return new DeckStatus(values);
 	}
 
+	// Строки вкладки «Устройство» и отчёта для задачи: ключ, подпись
+	public static readonly (string Key, string Label)[] Rows =
+	[
+		("host", "Устройство"),
+		("os", "Система"),
+		("kernel", "Ядро"),
+		("session", "Режим"),
+		("steam", "Steam"),
+		("battery", "Батарея"),
+		("temp", "Температура"),
+		("gpu", "Загрузка GPU"),
+		("fan", "Вентилятор"),
+		("mem", "Память"),
+		("disk", "Свободно в /home"),
+		("ip", "Сеть"),
+		("uptime", "Работает"),
+		("cef", "CEF-отладка Steam")
+	];
+
+	// Значение строки Rows для человека; address — адрес подключения, если сеть Deck не определилась
+	public string Display(string key, string address)
+	{
+		string value = key switch
+		{
+			"os" => $"{this["os"]} {string.Join(" ", new[] { this["version"], this["build"].Length > 0 ? $"(build {this["build"]})" : string.Empty }.Where(v => v.Length > 0))}".Trim(),
+			"session" => IsGameMode ? "Game Mode (gamescope)" : IsDesktop ? "Рабочий стол (KDE Plasma)" : "не определён",
+			"steam" => SteamRunning ? "запущен" : "не запущен",
+			"battery" => this["battery"].Length > 0 ? $"{this["battery"]} % ({TranslateBattery(this["battery_status"])})" : string.Empty,
+			"temp" => $"APU {Temperature("k10temp")}, GPU {Temperature("amdgpu")}",
+			"gpu" => this["gpu_busy"].Length > 0 ? this["gpu_busy"] + " %" : string.Empty,
+			"fan" => this["fan"].Length > 0 ? this["fan"] + " об/мин" : string.Empty,
+			"mem" => FormatPair(this["mem"], kilobytes: true, "занято", used: true),
+			"disk" => FormatPair(this["disk"], kilobytes: false, "из", used: false),
+			"ip" => this["ip"].Length > 0 ? this["ip"] : address,
+			"uptime" => long.TryParse(this["uptime"], out long seconds) ? FormatUptime(TimeSpan.FromSeconds(seconds)) : string.Empty,
+			"cef" => CefDebuggingEnabled ? "включена (порт 8081 после перезапуска Steam)" : "выключена",
+			_ => this[key]
+		};
+
+		return string.IsNullOrWhiteSpace(value) ? "—" : value;
+	}
+
 	// Температура из hwmon приходит в миллиградусах
 	public string Temperature(string sensor)
 	{
@@ -85,5 +127,37 @@ public sealed class DeckStatus
 		}
 
 		return $"{value:0.#} {units[unit]}";
+	}
+
+	// "total available" из /proc/meminfo (КБ) или "available total" из df (байты)
+	private static string FormatPair(string raw, bool kilobytes, string joiner, bool used)
+	{
+		string[] parts = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+		if (parts.Length != 2 || !long.TryParse(parts[0], out long a) || !long.TryParse(parts[1], out long b))
+		{
+			return "—";
+		}
+
+		long scale = kilobytes ? 1024 : 1;
+		return used
+			? $"{FormatBytes((a - b) * scale)} {joiner} из {FormatBytes(a * scale)}"
+			: $"{FormatBytes(a * scale)} {joiner} {FormatBytes(b * scale)}";
+	}
+
+	private static string FormatUptime(TimeSpan time)
+	{
+		return time.TotalDays >= 1 ? $"{(int)time.TotalDays} д {time.Hours} ч" : $"{time.Hours} ч {time.Minutes} мин";
+	}
+
+	private static string TranslateBattery(string status)
+	{
+		return status switch
+		{
+			"Charging" => "заряжается",
+			"Discharging" => "разряжается",
+			"Full" => "заряжена",
+			"Not charging" => "не заряжается",
+			_ => status
+		};
 	}
 }
